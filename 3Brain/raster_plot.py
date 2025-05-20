@@ -1,18 +1,21 @@
 import numpy as np 
 import matplotlib.pyplot as plt 
 import h5py 
+
 # define variables 
-fileDirectory = 'C:\\Users\\Admin\\OneDrive\\Desktop\\UniBE\\data\\'
+fileDirectory = 'C:\\Users\\Admin\\UniBE\\data\\'
 fileName = '150525_530_15_1a_DRC470_02.bxr'
 wellID = 'Well_A1' # identifier of chip well to be analysed 
-dataStartPositionSec = 2 # start position in seconds of the portion to extract and plot 
-dataDurationSec = 5 # duration in seconds of the portion to extract and plot 
+dataStartPositionSec = 0 # start position in seconds of the portion to extract and plot 
+dataDurationSec = 797.07 # duration in seconds of the portion to extract and plot 
+
 # open the BXR file 
 file = h5py.File(fileDirectory + fileName, 'r')
 
 # collect experiment information 
 samplingRate = file.attrs['SamplingRate'] 
 chIdxs = np.array(file[wellID + '/StoredChIdxs']) 
+print(chIdxs)
  
 # convert the requested time interval from seconds to frames 
 startFrame = int(dataStartPositionSec * samplingRate) 

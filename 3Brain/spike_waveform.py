@@ -4,13 +4,13 @@ import matplotlib.colors as mcolors
 import h5py 
  
 # define variables 
-fileDirectory = 'C:\\Users\\Admin\\OneDrive\\Desktop\\UniBE\\data\\'
+fileDirectory = 'C:\\Users\\Admin\\UniBE\\data\\'
 fileName = '150525_530_15_1a_DRC470_02.bxr'
-chIdx = 280 # identifier of channel to be analysed 
+chIdx = 15 # identifier of channel to be analysed 
 wellID = 'Well_A1' # identifier of chip well to be analysed 
  
-dataStartPositionSec = 2 # start position in seconds of the portion to extract and plot 
-dataDurationSec = 5 # duration in seconds of the portion to extract and plot 
+dataStartPositionSec = 0 # start position in seconds of the portion to extract and plot 
+dataDurationSec = 50 # duration in seconds of the portion to extract and plot 
  
 # open the BXR file 
 file = h5py.File(fileDirectory + fileName, 'r') 
@@ -28,16 +28,20 @@ chIdxs = np.array(file[wellID + '/StoredChIdxs'])
 # convert the requested time interval from seconds to frames 
 startFrame = int(dataStartPositionSec * samplingRate) 
 nFrames = int(dataDurationSec * samplingRate) 
+print('frames', startFrame, nFrames)
  
 # collect the TOCs 
 toc = np.array(file['TOC']) 
+print(toc[:, 1])
 spikeToc = np.array(file[wellID + '/SpikeTOC']) 
  
 # from the given start position and duration (in frames), find the corresponding range of spike positions using the TOC 
 tocStartIdx = np.searchsorted(toc[:, 1], startFrame) 
 tocEndIdx = min(np.searchsorted(toc[:, 1], startFrame + nFrames, side='right') + 1, len(toc) - 1) 
+print('toc', tocStartIdx, tocEndIdx)
 spikeStartPosition = spikeToc[tocStartIdx] 
 spikeEndPosition = spikeToc[tocEndIdx] 
+print(spikeStartPosition, spikeEndPosition)
  
 # collect the required spike data 
 spikeDataTimestamps = file[wellID + '/SpikeTimes'][spikeStartPosition:spikeEndPosition] 
