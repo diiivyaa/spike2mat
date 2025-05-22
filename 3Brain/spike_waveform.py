@@ -10,7 +10,7 @@ chIdx = 15 # identifier of channel to be analysed
 wellID = 'Well_A1' # identifier of chip well to be analysed 
  
 dataStartPositionSec = 0 # start position in seconds of the portion to extract and plot 
-dataDurationSec = 50 # duration in seconds of the portion to extract and plot 
+dataDurationSec = 100 # duration in seconds of the portion to extract and plot 
  
 # open the BXR file 
 file = h5py.File(fileDirectory + fileName, 'r') 
@@ -39,8 +39,8 @@ spikeToc = np.array(file[wellID + '/SpikeTOC'])
 tocStartIdx = np.searchsorted(toc[:, 1], startFrame) 
 tocEndIdx = min(np.searchsorted(toc[:, 1], startFrame + nFrames, side='right') + 1, len(toc) - 1) 
 print('toc', tocStartIdx, tocEndIdx)
-spikeStartPosition = spikeToc[tocStartIdx] 
-spikeEndPosition = spikeToc[tocEndIdx] 
+spikeStartPosition = spikeToc[tocStartIdx]
+spikeEndPosition = spikeToc[tocEndIdx]
 print(spikeStartPosition, spikeEndPosition)
  
 # collect the required spike data 
@@ -52,8 +52,7 @@ if spikeSortingPerformed:
     spikeDataChUnits = file[wellID + '/SpikeUnits'][spikeStartPosition:spikeEndPosition] 
  
 waveformLength = file[wellID + '/SpikeForms'].attrs['Wavelength'] 
-spikeDataWaveforms = file[wellID + 
-'/SpikeForms'][spikeStartPosition*waveformLength:spikeEndPosition*waveformLength] 
+spikeDataWaveforms = file[wellID + '/SpikeForms'][spikeStartPosition*waveformLength:spikeEndPosition*waveformLength] 
 dataLength = spikeEndPosition - spikeStartPosition 
  
 # collect the waveforms for the given time range and channel index 
@@ -64,8 +63,7 @@ for i in range(0, dataLength):
             spikeUnit = spikeDataChUnits[i] 
             if spikeUnit not in waveformData.keys(): 
                 waveformData[spikeUnit] = [] 
-            waveformData[spikeUnit].append(spikeDataWaveforms[i*waveformLength:i*waveformLength 
-                                                                                    +waveformLength]) 
+            waveformData[spikeUnit].append(spikeDataWaveforms[i*waveformLength:i*waveformLength+waveformLength]) 
         else: 
             waveformData.append(spikeDataWaveforms[i*waveformLength:i*waveformLength+waveformLength]) 
  
