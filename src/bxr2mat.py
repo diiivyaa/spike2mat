@@ -2,9 +2,9 @@ import h5py, os
 import numpy as np
 from scipy.io import savemat
 
-# Step 1: Read spike times from .bxr file
-fileDirectory = 'C:\\Users\\Admin\\UniBE\\data\\'
-fileName = '150525_530_15_1a_DRC470_02.bxr'
+# Read spike times from .bxr file
+fileDirectory = 'C:\\Users\\Admin\\UniBE\\data\\220525_530_19_1b_DRC470_02' # 150525_530_15_1a_DRC470_02
+fileName = '220525_530_19_1b_DRC470_02_2.bxr' # '150525_530_15_1a_DRC470_02.bxr'
 wellID = 'Well_A1'
 
 # open the BXR file 
@@ -41,19 +41,19 @@ for idx, ch in enumerate(spikeDataChIdxs):
     waveformData[ch].append(spikemV)  # store both!
     timeData[ch].append(time_s)
 
-arraySize = 64
-spikeArray, timeArray = np.empty((arraySize, arraySize), dtype=object), np.empty((arraySize, arraySize), dtype=object)
-for i in range(arraySize**2):
-    r, c = i//64, i%64  
+channels = 4096
+spikeArray, timeArray = np.empty((channels, 1), dtype=object), np.empty((channels, 1), dtype=object)
+for i in range(1, channels):  
     if i in waveformData.keys():
-        spikeArray[r][c] = np.array(waveformData[i])
+        spikeArray[i, 0] = np.asarray(waveformData[i], dtype=np.float64)
     else: 
-        spikeArray[r][c] = np.zeros((1, waveformLength), dtype=np.int16)
+        spikeArray[i, 0] = np.zeros((1, waveformLength), dtype=np.float64)
 
     if i in timeData.keys():
-        timeArray[r][c] = np.array(timeData[i])
-    else: 
-        timeArray[r][c] = np.zeros((waveformLength, 1), dtype=np.int16)
+        arr = np.asarray(timeData[i], dtype=np.float64)
+        timeArray[i, 0] = arr.reshape(-1, 1)
+    else:
+        timeArray[i, 0] = np.zeros((1, 1), dtype=np.float64)
 
 # Convert to MATLAB-compatible format
 mat_data = {
