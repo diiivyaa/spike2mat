@@ -41,9 +41,9 @@ for idx, ch in enumerate(spikeDataChIdxs):
     waveformData[ch].append(spikemV)  # store both!
     timeData[ch].append(time_s)
 
-channels = 4096
+channels = 4095
 spikeArray, timeArray = np.empty((channels, 1), dtype=object), np.empty((channels, 1), dtype=object)
-for i in range(1, channels):  
+for i in range(channels):  
     if i in waveformData.keys():
         spikeArray[i, 0] = np.asarray(waveformData[i], dtype=np.float64)
     else: 
