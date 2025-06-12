@@ -5,8 +5,8 @@ from collections import Counter
 from itertools import combinations
 
 # define variables 
-fileDirectory = 'C:\\Users\\Admin\\UniBE\\data\\220525_530_19_1b_DRC470_02' # 150525_530_15_1a_DRC470_02
-fileName = '220525_530_19_1b_DRC470_02_2.bxr' # '150525_530_15_1a_DRC470_02.bxr'
+fileDirectory = 'C:\\Users\\Admin\\UniBE\\data\\200525' # 150525_530_15_1a_DRC470_02
+fileName = '200525_531_18_1a_DRC470_03_thre6.bxr' # '150525_530_15_1a_DRC470_02.bxr'
 wellID = 'Well_A1' # identifier of chip well to be analysed 
 
 def main():
@@ -50,14 +50,14 @@ def main():
     plt.colorbar()
     plt.show()
 
-    for i in range(5):
-        img = plt.imread("C:\\Users\\Admin\\UniBE\\data\\220525_530_19_1b_DRC470_02\\images\\image3.jpeg")
+    for i in range(10):
+        img = plt.imread("C:\\Users\\Admin\\UniBE\\data\\200525\\thumbnail_IMG_3331.jpg")
         plt.imshow(img)
         points = plt.ginput(4)  # Click 4 points on the image   
         print(points)
         plt.close()
 
-        heatmap = cv2.imread("C:\\Users\\Admin\\UniBE\\data\\220525_530_19_1b_DRC470_02\\heatmap.png") 
+        heatmap = cv2.imread("C:\\Users\\Admin\\UniBE\\data\\200525\\heatmap.png") 
         # plt.imread --> 4-channel images (R, G, B, alpha) so use cv2.imread instead for 3-channel images
 
         # Points on the heatmap
@@ -90,7 +90,7 @@ def main():
         img_copy = img.copy()
         gray = cv2.cvtColor(img_copy, cv2.COLOR_BGR2GRAY)
 
-        _, thresholded = cv2.threshold(gray, 25, 255, cv2.THRESH_BINARY_INV)
+        _, thresholded = cv2.threshold(gray, 35, 255, cv2.THRESH_BINARY_INV)
             
         # rectangular kernel (5x5)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))    # General kernel size
@@ -111,8 +111,25 @@ def main():
         contour = best_contour.astype('float32') # Ensure type is float32
         transformed_contour = cv2.perspectiveTransform(contour, matrix)
 
-        cv2.drawContours(overlay, [transformed_contour.astype(int)], 0, (0, 255, 0), 2)
-        cv2.drawContours(heatmap, [transformed_contour.astype(int)], 0, (0, 255, 0), thickness=cv2.FILLED)
+        contour_copy = np.copy(transformed_contour)
+
+        new_points, seen_neighbours = [], set()
+        for i in range(len(transformed_contour)-1):
+            x, y = transformed_contour[i][0]
+            next_point = transformed_contour[i+1][0]
+            for dx, dy in ([-1,-1], [-1,0], [-1,1], [0,1], [1,1], [1,0], [1,-1], [0,-1]): # 8-connected neighbor offsets in clockwise order starting from the top-left
+                neighbour = (x + dx, y + dy)
+                if not np.array_equal(next_point, neighbour) and neighbour not in seen_neighbours:
+                    seen_neighbours.add(neighbour)
+                    new_points.append([[neighbour[0], neighbour[1]]])  # keep consistent shape
+
+        # Convert to correct shape and append
+        if new_points:
+            # new_points_array = np.array(new_points, dtype=copy.dtype)
+            contour_copy = np.vstack([contour_copy, new_points])
+        contour_copy = np.array(sorted(contour_copy, key=lambda x: x[0][0]), dtype=object)
+
+        cv2.drawContours(heatmap, [contour_copy.astype(int)], 0, (0, 255, 0), thickness=cv2.FILLED)
 
         mask = np.all(heatmap == [0, 255, 0], axis=-1)  # take extra channels
         coords = np.column_stack(np.where(mask))
