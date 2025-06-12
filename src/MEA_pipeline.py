@@ -2,19 +2,21 @@ import h5py, os, cv2, pathlib
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.path import Path
+from matplotlib.widgets import Cursor
 from collections import Counter
 from scipy.io import savemat
 from sklearn.decomposition import PCA
 from matplotlib.widgets import LassoSelector
 
 class MEAPipeline():
-    def __init__(self, bxr_path, img_path):
+    def __init__(self):
+        pass
+    
+    def read_files(self,  bxr_path, img_path):
+        '''Reads and checks if the bxr file is valid'''
         self.bxr_path= os.path.abspath(bxr_path.replace('"', ''))
         self.img_path = os.path.abspath(img_path.replace('"', ''))
         self.f_name = pathlib.Path(self.bxr_path).stem
-    
-    def read_file(self):
-        '''Reads and checks if the bxr file is valid'''
         try:
             self.wellID = 'Well_A1' # identifier of chip well to be analysed 
             self.file = h5py.File(self.bxr_path, 'r')
@@ -46,13 +48,14 @@ class MEAPipeline():
         # collect the required spike data 
         self.spikeDataTimestamps = self.file[self.wellID + '/SpikeTimes'][:] 
         self.spikeDataChIdxs = self.file[self.wellID + '/SpikeChIdxs'][:]
+        print(np.any(self.spikeDataChIdxs == 1))
         self.spikeDataWaveforms = self.file[self.wellID + '/SpikeForms'][:] 
         self.waveformLength = self.file[self.wellID + '/SpikeForms'].attrs['Wavelength'] 
 
         return [self.minDigitalValue, self.maxDigitalValue, self.minAnalogValue, self.maxAnalogValue, self.waveformLength,  
                 self.dacFactor, self.offsetValue, self.samplingRate, self.chIdxs, self.spikeDataWaveforms]
     
-    def get_heatmap(self, savePath, dpi=17.5):
+    def get_heatmap(self, savePath, dpi=17.5):  # set threshold as input
         '''Computes channel frequency and plots the activity map'''
 
         if not hasattr(self, 'spikeDataChIdxs'):  # check to see if the pre-requistite method is called
@@ -63,8 +66,10 @@ class MEAPipeline():
 
         for key in counts.keys():
             r, c = key//64, key%64
-            if counts[key] > 40000:
+            if counts[key] > 50000 or counts[key] < 30:
                 self.counts_array[r][c] = 0
+            elif r == 0 and c == 1:
+                self.counts_array[r][c] = counts[key]
             else:
                 self.counts_array[r][c] = counts[key]
 
@@ -84,13 +89,25 @@ class MEAPipeline():
             raise RuntimeError("File not loaded. Call read_file() before select_landmark().")
 
         self.img = plt.imread(self.img_path)
-        plt.imshow(self.img)
-        self.points = plt.ginput(4)  # Click 4 points on the image   
+        fig, ax = plt.subplots()
+        ax.imshow(self.img)
+        cursor = Cursor(ax, useblit=True, color='blue', linewidth=1)  # crosshair
+        plt.title("Click 4 Points")
+
+        self.points = plt.ginput(4, timeout=0)  # Click 4 points on the image
+
+        # Unzip the list of (x, y) points
+        x_vals, y_vals = zip(*self.points)
+        plt.plot(x_vals, y_vals, 'bo')  # Blue circle markers
+
+        plt.title("Selected Points")
+        plt.draw()
+
+        plt.show()
         print(self.points)
-        plt.close()
     
-    def get_contours(self, threshold=25):
-        '''Transforms the MEA image to align with the heatmap perspective and detects the sample's contour'''
+    def transform(self):
+        '''Transforms the MEA image to align with the heatmap perspective'''
         
         if not hasattr(self, 'heatmap_path'):  # check to see if the pre-requistite method is called
             raise RuntimeError("Heatmap not generated. Call get_heatmap() before get_contours().")
@@ -112,11 +129,11 @@ class MEAPipeline():
         src_pts = np.array(self.points, dtype=np.float32)
 
         # Transform
-        matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
+        self.matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
 
         # wrap heatmap to image shape
         height, width, _ = self.heatmap.shape
-        wrapped_img = cv2.warpPerspective(self.img, matrix, (width, height))
+        wrapped_img = cv2.warpPerspective(self.img, self.matrix, (width, height))
 
         # Normalise and colour heatmap
         img_norm = cv2.normalize(wrapped_img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
@@ -124,12 +141,67 @@ class MEAPipeline():
 
         # Overlay
         alpha = 0.5
-        overlay = cv2.addWeighted(self.heatmap, 1-alpha, cv2.cvtColor(img_colour, cv2.COLOR_RGB2BGR), alpha, 0)
+        self.overlay = cv2.addWeighted(self.heatmap, 1-alpha, cv2.cvtColor(img_colour, cv2.COLOR_RGB2BGR), alpha, 0)
+    
+    def draw_contours(self):
+        '''Draw the sample's contour manually'''
+        
+        if not hasattr(self, 'matrix'):  # check to see if the pre-requistite method is called
+            raise RuntimeError("Image not transformed. Call transform() before draw_contours().")
 
-        # Display
-        cv2.imshow("Overlay", overlay)
-        cv2.waitKey(0)
+        # Region selection
+        state = {
+            'drawing': False,
+            'mode': True,
+            'contour': []
+        }
+
+        # Mouse callback function
+        def draw(event, x, y, flags, param):
+            if event == cv2.EVENT_LBUTTONDOWN:
+                state['drawing'] = True
+                state['current_x'], state['current_y'] = x, y
+                state['contour'].append((x, y))
+
+            elif event == cv2.EVENT_MOUSEMOVE and state['drawing']:
+                if state['mode']:
+                    cv2.line(state['image'], (state['current_x'], state['current_y']), (x, y), (255, 0, 0), 2)
+                    state['current_x'], state['current_y'] = x, y
+                    state['contour'].append((x, y))
+
+            elif event == cv2.EVENT_LBUTTONUP:
+                state['drawing'] = False
+                if state['mode']:
+                    cv2.line(state['image'], (state['current_x'], state['current_y']), (x, y), (0, 0, 255), 2)
+                    state['contour'].append((x, y))
+                    if len(state['contour']) > 2:
+                        cv2.line(state['image'], (x, y), state['contour'][0], (0, 0, 255), 2)
+
+        state['image'] = cv2.imread(self.img_path)
+        window_name = "Draw Contours"
+        cv2.namedWindow(window_name)
+        cv2.setMouseCallback(window_name, draw)
+
+        while True:
+            cv2.imshow(window_name, state['image'])
+            k = cv2.waitKey(1) & 0xFF
+            if k == ord('m'):
+                state['mode'] = not state['mode']
+            elif k == 27:  # ESC
+                break
+
         cv2.destroyAllWindows()
+
+        contour_array = np.array(state['contour'], dtype=np.float32).reshape(-1, 1, 2)
+        self.transformed_contour = cv2.perspectiveTransform(contour_array, self.matrix)
+        cv2.drawContours(self.heatmap, [self.transformed_contour.astype(int)], 0, (0, 255, 0), thickness=cv2.FILLED)
+        return self.transformed_contour
+    
+    def get_contours(self, threshold=25):
+        '''Detects the sample's contour automatically'''
+        
+        if not hasattr(self, 'img'):
+            raise RuntimeError("Landmark selection not done. Call select_landmark() before get_contours().")
 
         # Contour detection
         img_copy = self.img.copy()
@@ -153,42 +225,45 @@ class MEAPipeline():
         for contour in contours:
             area = cv2.contourArea(contour)  
             if area > 10000:
-                print(area)
                 best_contour = contour
 
         # Transform
         contour = best_contour.astype('float32') # Ensure type is float32
-        transformed_contour = cv2.perspectiveTransform(contour, matrix)
+        self.transformed_contour = cv2.perspectiveTransform(contour, self.matrix)
+        return self.transformed_contour
 
-        new_points = []
-        contour_copy = np.copy(transformed_contour)
-
-        for i in range(len(transformed_contour)-1):
-            x, y = transformed_contour[i][0]
-            next_point = transformed_contour[i+1][0]
-            for dx, dy in [(-1,0), (0,1), (1,0), (0,-1)]:
-                neighbour = np.array([x + dx, y + dy])
-                if not np.array_equal(next_point, neighbour):
+    def get_coords(self):
+        '''Get 8-connected neighbours for the transformed'''
+        
+        if not hasattr(self, 'matrix'):  # check to see if the pre-requistite method is called
+            raise RuntimeError("Image not transformed. Call transform() before draw_contours().")
+    
+        contour_copy = np.copy(self.transformed_contour)
+        
+        new_points, seen_neighbours = [], set()
+        for i in range(len(self.transformed_contour)-1):
+            x, y = self.transformed_contour[i][0]
+            next_point = self.transformed_contour[i+1][0]
+            for dx, dy in ([-1,-1], [-1,0], [-1,1], [0,1], [1,1], [1,0], [1,-1], [0,-1]): # 8-connected neighbor offsets in clockwise order starting from the top-left
+                neighbour = (x + dx, y + dy)
+                if not np.array_equal(next_point, neighbour) and neighbour not in seen_neighbours:
+                    seen_neighbours.add(neighbour)
                     new_points.append([[neighbour[0], neighbour[1]]])  # keep consistent shape
 
         # Convert to correct shape and append
         if new_points:
-            # new_points_array = np.array(new_points, dtype=copy.dtype)
             contour_copy = np.vstack([contour_copy, new_points])
 
-        # copy = np.sort(copy, axis=0)
         contour_copy = np.array(sorted(contour_copy, key=lambda x: x[0][0]), dtype=object)
 
-        cv2.drawContours(overlay, [contour_copy.astype(int)], -1, (0, 255, 0), 2)
-        cv2.drawContours(overlay, [transformed_contour.astype(int)], 0, (255, 0, 0), 2)
-        cv2.imshow("Contours", overlay)
-        cv2.imwrite('test.png', overlay)
+        cv2.drawContours(self.overlay, [contour_copy.astype(int)], -1, (0, 255, 0), 2)
+        cv2.drawContours(self.overlay, [self.transformed_contour.astype(int)], 0, (255, 0, 0), 2)
+        cv2.drawContours(self.heatmap, [contour_copy.astype(int)], 0, (0, 255, 0), thickness=cv2.FILLED)
+        cv2.imshow("Contours", self.overlay)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-        cv2.drawContours(self.heatmap, [contour_copy.astype(int)], 0, (0, 255, 0), thickness=cv2.FILLED)
-
-        return transformed_contour
+        return contour_copy
     
     def get_channels(self):
         '''Identifies active electrode channels based on the contour overlay.'''
@@ -207,6 +282,8 @@ class MEAPipeline():
             cleaned_heatmap[x][y] = self.counts_array[x][y]
             self.channels.append(64*x+y)
             # coordinate conventions differ between image and heatmaps (i.e., x and y are flipped)
+        cleaned_heatmap[0][1] = self.counts_array[0][1]
+        self.channels.append(64*0+1)
 
         fig = plt.Figure()
         plt.imshow(cleaned_heatmap, cmap='hot', interpolation='bilinear')
@@ -214,12 +291,28 @@ class MEAPipeline():
         plt.colorbar()
         plt.show()
     
+    def align_time(self):
+        '''Align time data based on channel (1,2) which is (0,1) in the array notation'''
+        
+        if any(not hasattr(self, attr) for attr in ['spikeDataChIdxs', 'spikeDataTimestamps']):  # check to see if the pre-requistite method is called
+            raise RuntimeError("Variables not loaded. Call get_var() before to_mat().")
+        
+        self.offset = 0
+        for idx, ch in enumerate(self.spikeDataChIdxs): 
+            if ch == 1:
+                # print(self.spikeDataTimestamps[idx]/self.samplingRate)    # Get the first timestamp in channel 1 (1, 2)
+                self.offset = int(self.spikeDataTimestamps[idx]/self.samplingRate - 30)
+                break  # to stop from looping
+        print(self.offset)
+    
     def to_mat(self, savePath):
         '''Convert and format data to a MAT file'''
 
         if any(not hasattr(self, attr) for attr in ['spikeDataChIdxs', 'spikeDataTimestamps', 'offsetValue', \
                                                     'spikeDataWaveforms', 'waveformLength', 'dacFactor']):  # check to see if the pre-requistite method is called
             raise RuntimeError("Variables not loaded. Call get_var() before to_mat().")
+        elif not hasattr(self, 'offset'):
+            raise RuntimeError("Offset not computed. Call align_time() before to_mat().")
         
         waveformData, timeData = {}, {}
         for idx, ch in enumerate(self.spikeDataChIdxs):
@@ -228,23 +321,32 @@ class MEAPipeline():
                     waveformData[ch] = []
                     timeData[ch] = []
                 
-                time_s = self.spikeDataTimestamps[idx]/self.samplingRate  # in seconds
+                time_s = (self.spikeDataTimestamps[idx]/self.samplingRate) - self.offset  # in seconds
                 waveform = self.spikeDataWaveforms[idx * self.waveformLength : (idx + 1) * self.waveformLength]
                 spikemV = [self.offsetValue + i * self.dacFactor for i in waveform] # convert digital signal to microvolt
                 
-                waveformData[ch].append(spikemV)  # store both!
-                timeData[ch].append(time_s)
+                if 0 <= time_s <= 750:
+                    waveformData[ch].append(spikemV)  # store both!
+                    timeData[ch].append(time_s)
+        
+        # remove empty lists
+        waveformData = {k:v for k,v in waveformData.items() if v}
+        timeData = {k:v for k,v in timeData.items() if v}
 
-        keys = list(waveformData.keys())
-        channels = len(keys)
-        spikeArray, timeArray = np.empty((channels, 1), dtype=object), np.empty((channels, 1), dtype=object)
+        keys, copy = list(waveformData.keys()), list(waveformData.keys())
+        spikeArray, timeArray = [], []
         for i in range(len(keys)):  
-            spikeArray[i, 0] = np.asarray(waveformData[keys[i]], dtype=np.float64)
-            arr = np.asarray(timeData[keys[i]], dtype=np.float64)
-            timeArray[i, 0] = arr.reshape(-1, 1)
+            if 30 <= len(waveformData[keys[i]]) <= 100000:
+                spikeArray.append(np.asarray(waveformData[keys[i]], dtype=np.float64))
+                arr = np.asarray(timeData[keys[i]], dtype=np.float64)
+                timeArray.append(arr.reshape(-1, 1))
+            else:
+                copy.remove(keys[i])
 
-        channels_arr = np.array(keys, dtype=np.float64)
-        channels_arr = channels_arr[:, np.newaxis]
+        # Format list to numpy column vector
+        spikeArray = np.array(spikeArray, dtype=object).reshape(-1, 1)
+        timeArray = np.array(timeArray, dtype=object).reshape(-1, 1)
+        channels_arr = np.array(copy, dtype=np.float64).reshape(-1, 1)
 
         # Convert to MATLAB-compatible format
         mat_data = {
@@ -330,13 +432,17 @@ class MEAPipeline():
             )
             plt.show()
     
-    def run(self, savePath, threshold=25):
-        self.read_file()
+    def run(self, savePath, bxr_path, img_path, threshold=25):
+        self.read_files(bxr_path, img_path)
         self.get_var()
         self.get_heatmap(savePath)
         self.select_landmark()
+        self.transform()
         self.get_contours(threshold)
+        self.get_coords()
+        # self.draw_contours()
         self.get_channels()
+        self.align_time()
         self.to_mat(savePath)
 
 if __name__ == '__main__':
@@ -344,6 +450,5 @@ if __name__ == '__main__':
     img_path = input('Image path: ')
     bxr_path = input('BXR file path: ')
     
-    si = MEAPipeline(bxr_path, img_path)
-    si.run(savePath=r"C:\Users\Admin\UniBE\data\150525_530_15_1a_DRC470_02")
-
+    si = MEAPipeline()
+    si.run(savePath=r"C:\Users\Admin\UniBE\data\200525", bxr_path=bxr_path, img_path=img_path, threshold=35)
