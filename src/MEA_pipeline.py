@@ -10,12 +10,16 @@ from matplotlib.widgets import LassoSelector
 
 class MEAPipeline():
     def __init__(self):
-        pass
+        self.channels = []
     
     def read_files(self,  bxr_path, img_path):
         '''Reads and checks if the bxr file is valid'''
         self.bxr_path= os.path.abspath(bxr_path.replace('"', ''))
         self.img_path = os.path.abspath(img_path.replace('"', ''))
+        if img_path:
+            self.img_path = os.path.abspath(img_path.replace('"', ''))
+        else:
+            self.img_path = None
         self.f_name = pathlib.Path(self.bxr_path).stem
         try:
             self.wellID = 'Well_A1' # identifier of chip well to be analysed 
@@ -276,7 +280,7 @@ class MEAPipeline():
         mask = np.all(self.heatmap == [0, 255, 0], axis=-1)  # take extra channels
         coords = np.column_stack(np.where(mask))
         cleaned_heatmap = np.zeros((64, 64))
-        self.channels = []
+        # self.channels = []
         for point in coords:
             x, y = point
             cleaned_heatmap[x][y] = self.counts_array[x][y]
@@ -305,8 +309,9 @@ class MEAPipeline():
                 break  # to stop from looping
         print(self.offset)
     
-    def to_mat(self, savePath):
+    def to_mat(self, savePath, time_end=750):
         '''Convert and format data to a MAT file'''
+        self.done = False
 
         if any(not hasattr(self, attr) for attr in ['spikeDataChIdxs', 'spikeDataTimestamps', 'offsetValue', \
                                                     'spikeDataWaveforms', 'waveformLength', 'dacFactor']):  # check to see if the pre-requistite method is called
@@ -314,10 +319,12 @@ class MEAPipeline():
         elif not hasattr(self, 'offset'):
             raise RuntimeError("Offset not computed. Call align_time() before to_mat().")
         
+        print("Converting to MAT file format................")
+        
         waveformData, timeData = {}, {}
         for idx, ch in enumerate(self.spikeDataChIdxs):
-            if ch in self.channels:
-                if ch not in waveformData:
+            if not self.channels or ch in self.channels:  # not self.channels checks if an image is given
+                if ch not in waveformData:                # ch in self.channels checks if image is given and channels with activity are kept
                     waveformData[ch] = []
                     timeData[ch] = []
                 
@@ -325,10 +332,10 @@ class MEAPipeline():
                 waveform = self.spikeDataWaveforms[idx * self.waveformLength : (idx + 1) * self.waveformLength]
                 spikemV = [self.offsetValue + i * self.dacFactor for i in waveform] # convert digital signal to microvolt
                 
-                if 0 <= time_s <= 750:
+                if 0 <= time_s <= time_end:
                     waveformData[ch].append(spikemV)  # store both!
                     timeData[ch].append(time_s)
-        
+    
         # remove empty lists
         waveformData = {k:v for k,v in waveformData.items() if v}
         timeData = {k:v for k,v in timeData.items() if v}
@@ -359,6 +366,8 @@ class MEAPipeline():
 
         # Save to .mat file
         savemat(os.path.join(savePath, ''.join([self.f_name, '.mat'])), mat_data)
+
+        self.done = True
     
     def get_waveform(self, chIdx=2899, start=0, end=500):
         '''Selects and plots waveforms for a specified channel within a given time range.'''
@@ -438,9 +447,9 @@ class MEAPipeline():
         self.get_heatmap(savePath)
         self.select_landmark()
         self.transform()
-        self.get_contours(threshold)
-        self.get_coords()
-        # self.draw_contours()
+        # self.get_contours(threshold)
+        # self.get_coords()
+        self.draw_contours()
         self.get_channels()
         self.align_time()
         self.to_mat(savePath)
@@ -451,4 +460,4 @@ if __name__ == '__main__':
     bxr_path = input('BXR file path: ')
     
     si = MEAPipeline()
-    si.run(savePath=r"C:\Users\Admin\UniBE\data\200525", bxr_path=bxr_path, img_path=img_path, threshold=35)
+    si.run(savePath=r"C:\Users\Admin\UniBE\data\130225", bxr_path=bxr_path, img_path=img_path)
