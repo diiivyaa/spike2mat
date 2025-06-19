@@ -1,12 +1,14 @@
 import h5py, os, cv2, pathlib
 import numpy as np
+import numpy.ma as ma
 import matplotlib.pyplot as plt
 from matplotlib.path import Path
 from matplotlib.widgets import Cursor
 from collections import Counter
 from scipy.io import savemat
-from sklearn.decomposition import PCA
 from matplotlib.widgets import LassoSelector
+from matplotlib.colors import LogNorm
+import seaborn as sns
 
 class MEAPipeline():
     def __init__(self):
@@ -59,8 +61,8 @@ class MEAPipeline():
         self.spikeDataWaveforms = self.file[self.wellID + '/SpikeForms'][:] 
         self.waveformLength = self.file[self.wellID + '/SpikeForms'].attrs['Wavelength'] 
 
-        # return [self.minDigitalValue, self.maxDigitalValue, self.minAnalogValue, self.maxAnalogValue, self.waveformLength,  
-        #         self.dacFactor, self.offsetValue, self.samplingRate, self.chIdxs, self.spikeDataWaveforms]
+        return [self.minDigitalValue, self.maxDigitalValue, self.minAnalogValue, self.maxAnalogValue, self.waveformLength,  
+                self.dacFactor, self.offsetValue, self.samplingRate, self.chIdxs, self.spikeDataWaveforms]
     
     def get_heatmap(self, savePath, dpi=17.5):  # set threshold as input
         '''Computes channel frequency and plots the activity map'''
@@ -79,15 +81,27 @@ class MEAPipeline():
                 self.counts_array[r][c] = counts[key]
             else:
                 self.counts_array[r][c] = counts[key]
+        
+        # Mask and handle low values
+        mask = self.counts_array == 0
+        counts_masked = ma.masked_array(self.counts_array, mask=mask)
+        counts_masked[counts_masked < 1] = 1
 
-        fig = plt.Figure(figsize=(64/dpi,64/dpi), dpi=dpi)
-        plt.imshow(self.counts_array, cmap='hot', interpolation='none')
-        plt.axis('off')
+        vmin = self.counts_array.min()
+        vmax = self.counts_array.max()
+
+        # Set output image size to exactly 64x64 pixels
+        dpi = 83.5
+        fig = plt.figure(figsize=(1, 1), dpi=dpi)
+
+        # Plot heatmap
+        ax = sns.heatmap(counts_masked, cmap='viridis', norm=LogNorm(vmin=vmin, vmax=vmax), cbar=False, ax=fig.add_subplot(111))
+        ax.axis('off')
+
+        # Save the figure
         self.heatmap_path = os.path.join(savePath, ''.join([self.f_name, '.png']))  # keep heatmap path for subsequent setps
         plt.savefig(self.heatmap_path, bbox_inches='tight', pad_inches=0, dpi=dpi)
-        plt.axis('on')
-        plt.colorbar()
-        plt.show()
+        plt.close()
     
     def select_landmark(self):
         '''Interactive user landmark points selection'''
@@ -151,6 +165,14 @@ class MEAPipeline():
         # Overlay
         alpha = 0.5
         self.overlay = cv2.addWeighted(self.heatmap, 1-alpha, cv2.cvtColor(img_colour, cv2.COLOR_RGB2BGR), alpha, 0)
+
+        # Resize for display
+        height, width, channels = self.img.shape 
+        self.resized = cv2.resize(self.overlay, (height, width), interpolation = cv2.INTER_CUBIC)
+
+        cv2.imshow("Overlay", self.resized)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
     
     def draw_contours(self):
         '''Draw the sample's contour manually'''
@@ -204,6 +226,13 @@ class MEAPipeline():
         contour_array = np.array(state['contour'], dtype=np.float32).reshape(-1, 1, 2)
         self.transformed_contour = cv2.perspectiveTransform(contour_array, self.matrix)
         cv2.drawContours(self.heatmap, [self.transformed_contour.astype(int)], 0, (0, 255, 0), thickness=cv2.FILLED)
+
+        # For display
+        cv2.drawContours(self.resized, [contour_array.astype(int)], -1, (0, 255, 0), 2)
+        cv2.imshow("Contours", self.resized)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
         return self.transformed_contour
     
     def get_contours(self, threshold=25):
@@ -268,7 +297,10 @@ class MEAPipeline():
         cv2.drawContours(self.overlay, [contour_copy.astype(int)], -1, (0, 255, 0), 2)
         cv2.drawContours(self.overlay, [self.transformed_contour.astype(int)], 0, (255, 0, 0), 2)
         cv2.drawContours(self.heatmap, [contour_copy.astype(int)], 0, (0, 255, 0), thickness=cv2.FILLED)
-        cv2.imshow("Contours", self.overlay)
+        
+        # For display
+        cv2.drawContours(self.resized, [contour_copy.astype(int)], -1, (0, 255, 0), 2)
+        cv2.imshow("Contours", self.resized)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
@@ -412,40 +444,4 @@ class MEAPipeline():
             plt.plot(self.x, y, color='blue', alpha=0.3)
         
         return self.waveformData
-
-    def pca(self, n=3):
-        pca = PCA(n_components=n)
-        self.pca_scaled = pca.fit_transform(self.waveformData)
-        return self.pca_scaled
-    
-    def select_waveform(self):
-       def on_select(verts):
-            path = Path(verts)
-            
-            global mask
-            mask = path.contains_points(self.pca_scaled[:, [0,1]])
-            print(dict(Counter(mask)))
-
-            fig = plt.figure()
-            for i in range(len(self.waveformData)):
-                y = self.offsetValue + self.dacFactor * self.waveformData[i]
-                if mask[i]:  # if waveform is selected
-                    plt.plot(self.x, y, color='yellow')  # highlight selected in red
-                else:
-                    plt.plot(self.x, y, color='blue', alpha=0.3)
-            plt.show()
-
-            fig, ax = plt.subplots()
-            ax.scatter(self.pca_scaled[:, 0], self.pca_scaled[:, 1], s=1)
-            plt.xlabel('PC 1')
-            plt.ylabel('PC 2')
-            plt.title(f'PCA of Spike Waveforms - Channel {self.chIdx}')
-
-            selector = LassoSelector(
-                ax, on_select,
-                useblit=True,       
-                button=[1, 3],
-                props=dict(color='yellow', linewidth=2, linestyle='-') 
-            )
-            plt.show()
 
