@@ -1,8 +1,9 @@
 import os, sys, pathlib
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, \
 QStackedWidget, QRadioButton, QButtonGroup, QLabel, QSizePolicy, QScrollArea, QLineEdit
-from PySide6.QtGui import QFontDatabase, QIcon, QFont, QIntValidator, QMovie
-from PySide6.QtCore import Qt, QSize, QRunnable, Slot, QThreadPool, Signal, QObject, QThread
+from PySide6.QtGui import QFontDatabase, QIcon, QFont, QIntValidator
+from PySide6.QtSvgWidgets import QSvgWidget
+from PySide6.QtCore import Qt, QSize, Slot, Signal, QObject, QThread
 
 from MEA_pipeline import MEAPipeline
 from progressBar import CustomProgressBar
@@ -95,6 +96,8 @@ class ImportFile(QWidget):
                     self.controller.img_path = f_path
                     self.controller.flag = True
                     print(self.controller.flag)
+                else:
+                    self.controller.img_path = ""
             self.controller.obj.read_files(self.controller.bxr_path, self.controller.img_path)
             self.controller.obj.get_var()
             
@@ -153,7 +156,8 @@ class savePath(QWidget):
         if self.controller.flag:
             self.controller.show_frame("Contour detection")
         else:
-            self.controller.show_frame("File type")
+            self.controller.show_frame("Loading")
+            self.controller.pages["Loading"].start_work()
 
 class OptionSelect(QWidget):
     def __init__(self, controller):
@@ -170,21 +174,21 @@ class OptionSelect(QWidget):
         container_layout.addWidget(label)
 
         self.radio_group = QButtonGroup(self)
-        auto_radio = QRadioButton("Automated selection")
-        manual_radio = QRadioButton("Manual selection")
-        auto_radio.setChecked(True)
+        self.radio_group.setExclusive(False)
+        self.auto_radio = QRadioButton("Automated selection")
+        self.manual_radio = QRadioButton("Manual selection")
 
-        self.radio_group.addButton(auto_radio, id=1)
-        self.radio_group.addButton(manual_radio, id=2)
+        self.radio_group.addButton(self.auto_radio, id=1)
+        self.radio_group.addButton(self.manual_radio, id=2)
 
-        container_layout.addWidget(auto_radio)
+        container_layout.addWidget(self.auto_radio)
         # Ask for threshold input if automatic detection is selected
         self.thresh = QLineEdit(container)
         self.thresh.setPlaceholderText("Enter threshold value otherwise default is 25")
         self.thresh.setValidator(QIntValidator(1, 999, self))
         container_layout.addWidget(self.thresh)
         self.thresh.hide()
-        container_layout.addWidget(manual_radio)
+        container_layout.addWidget(self.manual_radio)
         self.radio_group.idClicked.connect(self.check)
 
         nav_layout = QHBoxLayout()
@@ -230,13 +234,20 @@ class OptionSelect(QWidget):
         radio_id = self.radio_group.checkedId()
         self.threshold = 25  # default
         if radio_id == 1:
+            self.auto_radio.setChecked(True)
+            self.manual_radio.setChecked(False)
+
             self.func = self.controller.obj.get_contours # Collect the correct methods from MEAPipeline
             self.helper_func = self.controller.obj.get_coords
             self.channels_func = self.controller.obj.get_channels
 
             self.thresh.show() # Show the input to get threshold
             self.thresh.returnPressed.connect(self.process)
-        else:
+        if radio_id == 2:
+            self.auto_radio.setChecked(False)
+            self.manual_radio.setChecked(True)
+            self.thresh.hide() # Hide the input to get threshold
+            
             self.func = self.controller.obj.draw_contours
             self.channels_func = self.controller.obj.get_channels
      
@@ -245,7 +256,9 @@ class OptionSelect(QWidget):
         self.controller.obj.select_landmark()
         self.controller.obj.transform()
 
-        # Check if threshold line edit is visibl
+        # Check which radio button is selected
+
+        # Check if threshold line edit is visible
         if self.thresh.isVisible():
             text = self.thresh.text()
             if text:
@@ -290,23 +303,30 @@ class Loading(QWidget):
         self.layout = QVBoxLayout()
         container = QWidget()
         container_layout = QVBoxLayout()
+        
         spin_layout = QVBoxLayout()
+        spin_layout.setSpacing(0)
+        spin_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.spinner_label = QLabel()
-        self.spinner = QMovie("C:/Users/Admin/UniBE/spike-sort/src/app/assets/test.gif")
-        self.spinner_label.setMovie(self.spinner)
-        self.spinner_label.setAlignment(Qt.AlignCenter)
-        self.spinner.start()
-        spin_layout.addWidget(self.spinner_label)
+        # Spinner (GIF) setup
+        self.spinner = QSvgWidget("src/app/assets/830.svg")
+        self.spinner.setFixedSize(128, 128)
 
+        # Processing text label
         self.label = QLabel("Processing, please wait...")
         self.label.setAlignment(Qt.AlignCenter)
-        spin_layout.addWidget(self.label)
 
+        # Start button
         next_button = QPushButton("Start")
         next_button.clicked.connect(lambda: self.controller.show_frame("File type"))
-        container_layout.addWidget(next_button)
+
+        # Spinner layout
+        spin_layout.addWidget(self.spinner, alignment=Qt.AlignCenter)
+        spin_layout.addWidget(self.label)
+
+        # Container layout
         container_layout.addLayout(spin_layout)
+        container_layout.addWidget(next_button)
         container.setLayout(container_layout)
 
         container.setStyleSheet("""
@@ -325,8 +345,17 @@ class Loading(QWidget):
             QPushButton:hover {
                 background-color: white;
                 color: #3532d1;}
+            QSvgWidget {
+                border: 0px;
+                border-radius: 0px;
+                padding: 0px;
+                margin: 0px;}
             QLabel {
-                color: black;}""")
+                color: black;
+                border: 0px;
+                border-radius: 0px;
+                padding: 0px;
+                margin: 0px;}""")
         container.setFixedSize(700, 250)
 
         self.layout.addWidget(container, alignment=Qt.AlignCenter)
@@ -346,7 +375,7 @@ class Loading(QWidget):
 
     @Slot(str)
     def display_result(self, message):
-        self.spinner_label.hide()
+        self.spinner.hide()
         self.label.setText(message)
 
 class MEAGui(QMainWindow):
@@ -393,7 +422,7 @@ class MEAGui(QMainWindow):
         self.progressbar = CustomProgressBar()
         self.progressbar.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.progressbar.setFixedSize(550,55) 
-        self.progressbar.labels = list(self.pages.keys())
+        self.progressbar.labels = ["File type", "Save dir", "Contour detection", 'Results']
 
         header = QWidget()
         h_layout = QHBoxLayout(header)
