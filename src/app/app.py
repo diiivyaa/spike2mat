@@ -1,6 +1,6 @@
 import os, sys, pathlib
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, \
-QStackedWidget, QRadioButton, QButtonGroup, QLabel, QSizePolicy, QScrollArea, QLineEdit
+QStackedWidget, QRadioButton, QButtonGroup, QLabel, QSizePolicy, QScrollArea, QLineEdit, QGroupBox
 from PySide6.QtGui import QFontDatabase, QIcon, QFont, QIntValidator
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtCore import Qt, QSize, Slot, Signal, QObject, QThread
@@ -30,7 +30,7 @@ class ImportFile(QWidget):
         self.upload_button.clicked.connect(self.import_func)
 
         # Scrollable file label
-        self.file_label = QLabel("No file chosen")
+        self.file_label = QLabel("No file(s) selected")
         self.file_label.setStyleSheet("color: #555; padding: 5px;")
         self.file_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.file_label.setWordWrap(True)
@@ -110,10 +110,47 @@ class savePath(QWidget):
         container = QWidget()
         container_layout = QVBoxLayout()
 
+        file_dir = QHBoxLayout()
         save_button = QPushButton("Select directory to save output files")
         save_button.clicked.connect(self.process)
-        container_layout.addWidget(save_button)
+        file_dir.addWidget(save_button)
 
+        self.file_label = QLabel("No file(s) selected")
+        self.file_label.setStyleSheet("color: #555; padding: 5px;")
+        self.file_label.setFixedHeight(50)
+        self.file_label.setWordWrap(True)
+        file_dir.addWidget(self.file_label)
+        container_layout.addLayout(file_dir)
+
+        params = QGroupBox("Parameters")
+        params_layout = QVBoxLayout()
+        qn1_layout = QHBoxLayout()
+        qn1_layout.addSpacing(10)
+        time_label = QLabel("Enter end duration in ms:")
+        time_label.setFixedSize(155, 40)
+        self.time_end = QLineEdit(container)
+        self.time_end.setPlaceholderText("Default value is 750ms")
+        self.time_end.setValidator(QIntValidator(1, 999, self))
+        qn1_layout.addWidget(time_label)
+        qn1_layout.addWidget(self.time_end)
+
+        qn2_layout = QHBoxLayout()
+        qn2_layout.addSpacing(10)
+        self.offset_label = QLabel("Enter offset value in ms:")
+        self.offset_label.setFixedSize(155, 40)
+        self.offset = QLineEdit(container)
+        self.offset.setPlaceholderText("Default is 0")
+        self.offset.setValidator(QIntValidator(1, 999, self))
+        qn2_layout.addWidget(self.offset_label)
+        qn2_layout.addWidget(self.offset)
+        self.offset_label.hide()
+        self.offset.hide()
+
+        params_layout.addLayout(qn1_layout)
+        params_layout.addLayout(qn2_layout)
+        params.setLayout(params_layout)
+        container_layout.addWidget(params)
+        
         nav_layout = QHBoxLayout()
         back_button = QPushButton("Back")
         back_button.clicked.connect(lambda: controller.show_frame("File type"))
@@ -122,6 +159,7 @@ class savePath(QWidget):
         next_button = QPushButton("Next")
         nav_layout.addWidget(next_button)
         next_button.clicked.connect(self.next_clicked)
+        container_layout.addSpacing(10)
         container_layout.addLayout(nav_layout)
         container.setLayout(container_layout)
 
@@ -140,18 +178,58 @@ class savePath(QWidget):
                 margin: 0 5px;}
             QPushButton:hover {
                 background-color: white;
-                color: #3532d1;}""")
+                color: #3532d1;}
+            QLabel {
+                color: black;}
+            QLineEdit{
+                color: black;}
+            QGroupBox {
+                background-color: transparent;
+                font-weight: normal;
+                border: 1px solid lightgray;
+                border-radius: 5px;
+                margin-top: 6px;}
+            QGroupBox::title {
+                color: balck;
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+                background-color: transparent;}""")
         container.setFixedSize(700, 250)
 
         layout.addWidget(container, alignment=Qt.AlignCenter)
         self.setLayout(layout)
+    
+    def update_offset(self):
+        if self.controller.obj.no_offset:
+            self.offset_label.show()
+            self.offset.show()
+            self.controller.align_time = None
+        else:
+            self.controller.align_time = self.controller.obj.align_time  # Store the function and call it during processing
+            self.offset_label.hide()
+            self.offset.hide()
 
     def process(self):
         self.controller.dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
         if self.controller.dir_path:
+            self.file_label.setText(self.controller.dir_path)
             self.controller.obj.get_heatmap(self.controller.dir_path)
     
     def next_clicked(self):
+        # Set default values
+        offset = self.offset.text()
+        time = self.time_end.text()
+        if offset:
+            self.controller.offset = int(offset)
+        else:
+            self.controller.offset = 0
+        
+        if time:
+            self.controller.time = int(time)
+        else: 
+            self.controller.time = 750
+    
         print(f"Flag value at click: {self.controller.flag}")
         if self.controller.flag:
             self.controller.show_frame("Contour detection")
@@ -256,8 +334,6 @@ class OptionSelect(QWidget):
         self.controller.obj.select_landmark()
         self.controller.obj.transform()
 
-        # Check which radio button is selected
-
         # Check if threshold line edit is visible
         if self.thresh.isVisible():
             text = self.thresh.text()
@@ -280,18 +356,44 @@ class Worker(QObject):
     progress = Signal(int)
     result = Signal(str)
 
-    def __init__(self, pipeline, save_path):
+    def __init__(self, pipeline, save_path, *args):
         super().__init__()
         self.pipeline = pipeline
         self.save_path = save_path
+        self._is_interrupted = False
+        print(args)
+        if args:
+            self.time_end = args[0]
+            self.offset = args[1]
 
     @Slot()
     def do_work(self):
         print("Worker is running") 
-        self.pipeline.align_time()
-        self.pipeline.to_mat(self.save_path)
-        self.result.emit("Work finished!")
+        if self._is_interrupted:  # Check for interruption
+            self.cancelled.emit()
+            self.finished.emit()
+
+        if self.pipeline.align_time:
+            self.pipeline.align_time()
+            if self._is_interrupted:  # Check for interruption
+                self.cancelled.emit()
+                self.finished.emit()
+            self.pipeline.obj.to_mat(self.save_path, self.time)
+        else:
+            if self._is_interrupted:  # Check for interruption
+                self.cancelled.emit()
+                self.finished.emit()
+            self.pipeline.obj.to_mat(self.save_path, self.time_end, self.offset)
+
+        if self._is_interrupted:  # Check for interruption
+            self.cancelled.emit()
+            self.finished.emit()
+
+        self.result.emit("Work finished!")  # reset
         self.finished.emit()
+    
+    def cancel(self):
+        self._is_interrupted = True
 
 class Loading(QWidget):
     def __init__(self, controller):
@@ -310,23 +412,31 @@ class Loading(QWidget):
 
         # Spinner (GIF) setup
         self.spinner = QSvgWidget("src/app/assets/830.svg")
-        self.spinner.setFixedSize(128, 128)
+        self.spinner.setFixedSize(100, 100)
 
         # Processing text label
         self.label = QLabel("Processing, please wait...")
-        self.label.setAlignment(Qt.AlignCenter)
+        self.label.setStyleSheet("font-size: 14px; color: #333; padding: 8px;")
 
-        # Start button
-        next_button = QPushButton("Start")
-        next_button.clicked.connect(lambda: self.controller.show_frame("File type"))
+        # Home button
+        self.home_button = QPushButton("Home")
+        self.home_button.clicked.connect(lambda: self.controller.show_frame("File type"))
+        self.home_button.setVisible(False)
+
+        # Cancel button
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(Worker.cancel)
 
         # Spinner layout
+        spin_layout.addSpacing(20)
         spin_layout.addWidget(self.spinner, alignment=Qt.AlignCenter)
-        spin_layout.addWidget(self.label)
+        spin_layout.addSpacing(15)
+        spin_layout.addWidget(self.label, alignment=Qt.AlignCenter)
 
         # Container layout
         container_layout.addLayout(spin_layout)
-        container_layout.addWidget(next_button)
+        container_layout.addWidget(self.home_button)
+        container_layout.addWidget(self.cancel_button)
         container.setLayout(container_layout)
 
         container.setStyleSheet("""
@@ -346,12 +456,7 @@ class Loading(QWidget):
                 background-color: white;
                 color: #3532d1;}
             QSvgWidget {
-                border: 0px;
-                border-radius: 0px;
-                padding: 0px;
-                margin: 0px;}
-            QLabel {
-                color: black;
+                background-color: transparent;
                 border: 0px;
                 border-radius: 0px;
                 padding: 0px;
@@ -363,7 +468,7 @@ class Loading(QWidget):
     
     @Slot()
     def start_work(self):
-        self.worker = Worker(self.controller.obj, self.controller.dir_path)
+        self.worker = Worker(self.controller, self.controller.dir_path, self.controller.time, self.controller.offset)
         self.thread = QThread()
         self.worker.moveToThread(self.thread)
         self.worker.finished.connect(self.thread.quit)
@@ -376,6 +481,8 @@ class Loading(QWidget):
     @Slot(str)
     def display_result(self, message):
         self.spinner.hide()
+        self.home_button.setVisible(True)
+        self.cancel_button.setVisible(False)
         self.label.setText(message)
 
 class MEAGui(QMainWindow):
@@ -442,6 +549,8 @@ class MEAGui(QMainWindow):
     def show_frame(self, name):
         page = self.pages.get(name)
         if page:
+            if name == "Save dir":
+                self.pages["Save dir"].update_offset()  # update offset visibilitys
             self.stack.setCurrentWidget(page)
             index = list(self.pages.keys()).index(name)
             self.progressbar.value = index
