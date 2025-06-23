@@ -16,7 +16,7 @@ class MEAPipeline():
         If list is empty --> take all 4096 channels within 0 to 750ms interval.
         If list contains channels --> then image file was given to isolate channels with activity.'''
         self.channels = []
-        self.done = True
+        self.no_offset = False
     
     def read_files(self,  bxr_path, img_path):
         '''Reads and checks if the bxr file is valid'''
@@ -57,7 +57,8 @@ class MEAPipeline():
         # collect the required spike data 
         self.spikeDataTimestamps = self.file[self.wellID + '/SpikeTimes'][:] 
         self.spikeDataChIdxs = self.file[self.wellID + '/SpikeChIdxs'][:]
-        print(np.any(self.spikeDataChIdxs == 1))
+        if not np.any(self.spikeDataChIdxs == 1):  # If channel (1,2) doesn't exist --> prompt user to input time offset
+            self.no_offset = True
         self.spikeDataWaveforms = self.file[self.wellID + '/SpikeForms'][:] 
         self.waveformLength = self.file[self.wellID + '/SpikeForms'].attrs['Wavelength'] 
 
@@ -268,6 +269,13 @@ class MEAPipeline():
         # Transform
         contour = best_contour.astype('float32') # Ensure type is float32
         self.transformed_contour = cv2.perspectiveTransform(contour, self.matrix)
+
+        # For display
+        cv2.drawContours(self.resized, [contour.astype(int)], -1, (0, 255, 0), 2)
+        cv2.imshow("Contours", self.resized)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
         return self.transformed_contour
 
     def get_coords(self):
@@ -275,7 +283,7 @@ class MEAPipeline():
         
         if not hasattr(self, 'matrix'):  # check to see if the pre-requistite method is called
             raise RuntimeError("Image not transformed. Call transform() before draw_contours().")
-    
+
         contour_copy = np.copy(self.transformed_contour)
         
         new_points, seen_neighbours = [], set()
@@ -297,12 +305,6 @@ class MEAPipeline():
         cv2.drawContours(self.overlay, [contour_copy.astype(int)], -1, (0, 255, 0), 2)
         cv2.drawContours(self.overlay, [self.transformed_contour.astype(int)], 0, (255, 0, 0), 2)
         cv2.drawContours(self.heatmap, [contour_copy.astype(int)], 0, (0, 255, 0), thickness=cv2.FILLED)
-        
-        # For display
-        cv2.drawContours(self.resized, [contour_copy.astype(int)], -1, (0, 255, 0), 2)
-        cv2.imshow("Contours", self.resized)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
 
         return contour_copy
     
@@ -325,10 +327,33 @@ class MEAPipeline():
         cleaned_heatmap[0][1] = self.counts_array[0][1]
         self.channels.append(64*0+1)
 
-        fig = plt.Figure()
-        plt.imshow(cleaned_heatmap, cmap='hot', interpolation='bilinear')
-        plt.axis('on')
-        plt.colorbar()
+        # Mask and handle low values
+        mask = cleaned_heatmap == 0
+        counts_masked = ma.masked_array(cleaned_heatmap, mask=mask)
+        counts_masked[counts_masked < 1] = 1
+
+        vmin = cleaned_heatmap.min()
+        vmax = cleaned_heatmap.max()
+
+        # Plot heatmap
+        fig = plt.Figure(figsize=(64, 64))
+        ax = fig.add_subplot(1, 1, 1)
+
+        heatmap = sns.heatmap(counts_masked, cmap='viridis', norm=LogNorm(vmin=vmin, vmax=vmax))
+        cbar = heatmap.collections[0].colorbar
+        cbar.ax.minorticks_off()
+
+        # Set x and y ticks every 10 positions
+        xticks = np.arange(0, 64, 10)
+        yticks = np.arange(0, 64, 10)
+
+        ax.set_xticks(xticks)
+        ax.set_yticks(yticks)
+
+        ax.set_xticklabels(xticks, rotation=45, ha='right')
+        ax.set_yticklabels(yticks)
+
+        plt.tight_layout()
         plt.show()
     
     def align_time(self):
@@ -345,16 +370,21 @@ class MEAPipeline():
                 break  # to stop from looping
         print(self.offset)
     
-    def to_mat(self, savePath):
+    def to_mat(self, savePath, time_end=760, *args):
         '''Convert and format data to a MAT file'''
 
         if any(not hasattr(self, attr) for attr in ['spikeDataChIdxs', 'spikeDataTimestamps', 'offsetValue', \
                                                     'spikeDataWaveforms', 'waveformLength', 'dacFactor']):  # check to see if the pre-requistite method is called
             raise RuntimeError("Variables not loaded. Call get_var() before to_mat().")
-        elif not hasattr(self, 'offset'):
-            raise RuntimeError("Offset not computed. Call align_time() before to_mat().")
+        elif not hasattr(self, 'offset') and args:
+            self.offset = args[0]
+            print(f"Using time offset provided: {self.offset}")
+        elif not hasattr(self, 'offset') and not args:
+            self.offset = 0
+            print("Offset not computed. Converting without alignment")
+        else:
+            print(f"Using computed time offset: {self.offset}")
         
-        self.done = False
         print("Converting to MAT file format................")
         
         waveformData, timeData = {}, {}
@@ -368,7 +398,7 @@ class MEAPipeline():
                 waveform = self.spikeDataWaveforms[idx * self.waveformLength : (idx + 1) * self.waveformLength]
                 spikemV = [self.offsetValue + i * self.dacFactor for i in waveform] # convert digital signal to microvolt
                 
-                if 0 <= time_s <= 750:
+                if 0 <= time_s <= time_end:
                     waveformData[ch].append(spikemV)  # store both!
                     timeData[ch].append(time_s)
         
@@ -406,8 +436,6 @@ class MEAPipeline():
 
         # Save to .mat file
         savemat(os.path.join(savePath, ''.join([self.f_name, '.mat'])), mat_data)
-
-        self.done = False
     
     def get_waveform(self, chIdx=2899, start=0, end=500):
         '''Selects and plots waveforms for a specified channel within a given time range.'''

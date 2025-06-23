@@ -1,5 +1,7 @@
 import h5py, os, cv2, pathlib
 import numpy as np
+import numpy.ma as ma
+import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.path import Path
 from matplotlib.widgets import Cursor
@@ -7,6 +9,7 @@ from collections import Counter
 from scipy.io import savemat
 from sklearn.decomposition import PCA
 from matplotlib.widgets import LassoSelector
+from matplotlib.colors import LogNorm
 
 class MEAPipeline():
     def __init__(self):
@@ -77,14 +80,26 @@ class MEAPipeline():
             else:
                 self.counts_array[r][c] = counts[key]
 
-        fig = plt.Figure(figsize=(64/dpi,64/dpi), dpi=dpi)
-        plt.imshow(self.counts_array, cmap='hot', interpolation='none')
-        plt.axis('off')
+        # Mask and handle low values
+        mask = self.counts_array == 0
+        counts_masked = ma.masked_array(self.counts_array, mask=mask)
+        counts_masked[counts_masked < 1] = 1
+
+        vmin = self.counts_array.min()
+        vmax = self.counts_array.max()
+
+        # Set output image size to exactly 64x64 pixels
+        dpi = 83.5
+        fig = plt.figure(figsize=(1, 1), dpi=dpi)
+
+        # Plot heatmap
+        ax = sns.heatmap(counts_masked, cmap='viridis', norm=LogNorm(vmin=vmin, vmax=vmax), cbar=False, ax=fig.add_subplot(111))
+        ax.axis('off')
+
+        # Save the figure
         self.heatmap_path = os.path.join(savePath, ''.join([self.f_name, '.png']))  # keep heatmap path for subsequent setps
         plt.savefig(self.heatmap_path, bbox_inches='tight', pad_inches=0, dpi=dpi)
-        plt.axis('on')
-        plt.colorbar()
-        plt.show()
+        plt.close()
     
     def select_landmark(self):
         '''Interactive user landmark points selection'''
@@ -289,12 +304,35 @@ class MEAPipeline():
         cleaned_heatmap[0][1] = self.counts_array[0][1]
         self.channels.append(64*0+1)
 
-        fig = plt.Figure()
-        plt.imshow(cleaned_heatmap, cmap='hot', interpolation='bilinear')
-        plt.axis('on')
-        plt.colorbar()
+        # Mask and handle low values
+        mask = cleaned_heatmap == 0
+        counts_masked = ma.masked_array(cleaned_heatmap, mask=mask)
+        counts_masked[counts_masked < 1] = 1
+
+        vmin = cleaned_heatmap.min()
+        vmax = cleaned_heatmap.max()
+
+        # Plot heatmap
+        fig = plt.Figure(figsize=(64, 64))
+        ax = fig.add_subplot(1, 1, 1)
+
+        heatmap = sns.heatmap(counts_masked, cmap='viridis', norm=LogNorm(vmin=vmin, vmax=vmax))
+        cbar = heatmap.collections[0].colorbar
+        cbar.ax.minorticks_off()
+
+        # Set x and y ticks every 10 positions
+        xticks = np.arange(0, 64, 10)
+        yticks = np.arange(0, 64, 10)
+
+        ax.set_xticks(xticks)
+        ax.set_yticks(yticks)
+
+        ax.set_xticklabels(xticks, rotation=45, ha='right')
+        ax.set_yticklabels(yticks)
+
+        plt.tight_layout()
         plt.show()
-    
+
     def align_time(self):
         '''Align time data based on channel (1,2) which is (0,1) in the array notation'''
         
@@ -311,13 +349,17 @@ class MEAPipeline():
     
     def to_mat(self, savePath, time_end=750):
         '''Convert and format data to a MAT file'''
-        self.done = False
 
         if any(not hasattr(self, attr) for attr in ['spikeDataChIdxs', 'spikeDataTimestamps', 'offsetValue', \
                                                     'spikeDataWaveforms', 'waveformLength', 'dacFactor']):  # check to see if the pre-requistite method is called
             raise RuntimeError("Variables not loaded. Call get_var() before to_mat().")
+        
+        # Check if offset is computed
         elif not hasattr(self, 'offset'):
-            raise RuntimeError("Offset not computed. Call align_time() before to_mat().")
+            self.offset = 0
+            print("Offset not computed. Converting without alignment")
+        else:
+            print(f"Using computed time offset: {self.offset}")
         
         print("Converting to MAT file format................")
         
@@ -366,8 +408,6 @@ class MEAPipeline():
 
         # Save to .mat file
         savemat(os.path.join(savePath, ''.join([self.f_name, '.mat'])), mat_data)
-
-        self.done = True
     
     def get_waveform(self, chIdx=2899, start=0, end=500):
         '''Selects and plots waveforms for a specified channel within a given time range.'''
@@ -451,8 +491,8 @@ class MEAPipeline():
         # self.get_coords()
         self.draw_contours()
         self.get_channels()
-        self.align_time()
-        self.to_mat(savePath)
+        # self.align_time()
+        self.to_mat(savePath, time_end=760)
 
 if __name__ == '__main__':
     # read input from the user
@@ -460,4 +500,4 @@ if __name__ == '__main__':
     bxr_path = input('BXR file path: ')
     
     si = MEAPipeline()
-    si.run(savePath=r"C:\Users\Admin\UniBE\data\130225", bxr_path=bxr_path, img_path=img_path)
+    si.run(savePath=r"C:\Users\Admin\UniBE\data\170625", bxr_path=bxr_path, img_path=img_path, threshold=35)
