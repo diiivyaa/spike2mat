@@ -8,7 +8,17 @@ from PySide6.QtCore import Qt, QSize, Slot, Signal, QObject, QThread
 from MEA_pipeline import MEAPipeline
 from progressBar import CustomProgressBar
 
-CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
+# CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
+
+def resource_path(relative_path):
+    """Get path to bundled resource, whether in dev or in PyInstaller .exe"""
+    try:
+        base_path = sys._MEIPASS  # PyInstaller temporary path
+    except AttributeError:
+        base_path = os.path.abspath(os.path.dirname(__file__))  # dev mode
+        # base_path = os.path.join(base_path, "assets")
+
+    return os.path.join(base_path, relative_path)
 
 class ImportFile(QWidget):
     def __init__(self, controller):
@@ -53,10 +63,11 @@ class ImportFile(QWidget):
         container_layout.addWidget(heading, alignment=Qt.AlignCenter|Qt.AlignTop)
         container_layout.addSpacing(20)
         container_layout.addLayout(file_box_layout)
-        next_button = QPushButton("Next")
-        next_button.clicked.connect(lambda: controller.show_frame("Save dir"))
+        self.next_button = QPushButton("Next")
+        self.next_button.clicked.connect(lambda: controller.show_frame("Save dir"))
+        self.next_button.setEnabled(False)
         container_layout.addSpacing(20)
-        container_layout.addWidget(next_button)
+        container_layout.addWidget(self.next_button)
         container_layout.addStretch()
 
         container.setLayout(container_layout)
@@ -85,11 +96,14 @@ class ImportFile(QWidget):
         files, _ = QFileDialog.getOpenFileNames(self, "Select files", "", "Images, BXR and BRW (*.bxr *.brw *.jpeg *.jpg *.png)")
         self.controller.bxr_path, self.controller.img_path = None, None
         if files:
+            self.controller.dir_path  = pathlib.Path(files[0]).parent  # Get parent folder
+
             filenames_display = "\n".join([f"• {os.path.basename(path)}" for path in files])
             self.file_label.setText(f"{len(files)} file(s) selected:\n{filenames_display}")
             self.file_label.setToolTip("\n".join(files))
             for f_path in files:
                 ext = pathlib.Path(f_path).suffix
+                ext = ext.lower()
                 if ext == ".bxr":
                     self.controller.bxr_path = f_path
                 elif ext == ".jpeg" or ext == ".jpg" or ext == ".png":
@@ -98,9 +112,12 @@ class ImportFile(QWidget):
                     print(self.controller.flag)
                 else:
                     self.controller.img_path = ""
+            print(self.controller.bxr_path, self.controller.img_path)
             self.controller.obj.read_files(self.controller.bxr_path, self.controller.img_path)
-            self.controller.obj.get_var()
-            
+            self.controller.offset_flag = self.controller.obj.get_var()
+        self.next_button.setEnabled(True)
+        self.controller.pages["Save dir"].file_label.setText(str(self.controller.dir_path))
+        
 class savePath(QWidget):
     def __init__(self, controller):
         super().__init__()
@@ -112,6 +129,7 @@ class savePath(QWidget):
 
         file_dir = QHBoxLayout()
         save_button = QPushButton("Select directory to save output files")
+        save_button.setFixedSize(250, 40)
         save_button.clicked.connect(self.process)
         file_dir.addWidget(save_button)
 
@@ -126,17 +144,17 @@ class savePath(QWidget):
         params_layout = QVBoxLayout()
         qn1_layout = QHBoxLayout()
         qn1_layout.addSpacing(10)
-        time_label = QLabel("Enter end duration in ms:")
+        time_label = QLabel("Enter end duration (s):")
         time_label.setFixedSize(155, 40)
         self.time_end = QLineEdit(container)
-        self.time_end.setPlaceholderText("Default value is 750ms")
+        self.time_end.setPlaceholderText("Default value is 750s")
         self.time_end.setValidator(QIntValidator(1, 999, self))
         qn1_layout.addWidget(time_label)
         qn1_layout.addWidget(self.time_end)
 
         qn2_layout = QHBoxLayout()
         qn2_layout.addSpacing(10)
-        self.offset_label = QLabel("Enter offset value in ms:")
+        self.offset_label = QLabel("Enter offset value (s):")
         self.offset_label.setFixedSize(155, 40)
         self.offset = QLineEdit(container)
         self.offset.setPlaceholderText("Default is 0")
@@ -201,14 +219,14 @@ class savePath(QWidget):
         self.setLayout(layout)
     
     def update_offset(self):
-        if self.controller.obj.no_offset:
-            self.offset_label.show()
-            self.offset.show()
-            self.controller.align_time = None
-        else:
+        if self.controller.offset_flag:
             self.controller.align_time = self.controller.obj.align_time  # Store the function and call it during processing
             self.offset_label.hide()
             self.offset.hide()
+        else:
+            self.offset_label.show()
+            self.offset.show()
+            self.controller.align_time = None
 
     def process(self):
         self.controller.dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
@@ -354,6 +372,7 @@ class OptionSelect(QWidget):
 class Worker(QObject):
     finished = Signal()
     progress = Signal(int)
+    cancelled = Signal()
     result = Signal(str)
 
     def __init__(self, pipeline, save_path, *args):
@@ -361,7 +380,6 @@ class Worker(QObject):
         self.pipeline = pipeline
         self.save_path = save_path
         self._is_interrupted = False
-        print(args)
         if args:
             self.time_end = args[0]
             self.offset = args[1]
@@ -369,28 +387,29 @@ class Worker(QObject):
     @Slot()
     def do_work(self):
         print("Worker is running") 
-        if self._is_interrupted:  # Check for interruption
-            self.cancelled.emit()
-            self.finished.emit()
+        if self.check_cancelled(): 
+            return
 
         if self.pipeline.align_time:
             self.pipeline.align_time()
-            if self._is_interrupted:  # Check for interruption
-                self.cancelled.emit()
-                self.finished.emit()
-            self.pipeline.obj.to_mat(self.save_path, self.time)
+            if self.check_cancelled(): 
+                return
+            self.pipeline.obj.to_mat(self.save_path, self.time_end)
         else:
-            if self._is_interrupted:  # Check for interruption
-                self.cancelled.emit()
-                self.finished.emit()
+            if self.check_cancelled(): return
             self.pipeline.obj.to_mat(self.save_path, self.time_end, self.offset)
 
-        if self._is_interrupted:  # Check for interruption
-            self.cancelled.emit()
-            self.finished.emit()
+        if self.check_cancelled(): return
 
         self.result.emit("Work finished!")  # reset
         self.finished.emit()
+    
+    def check_cancelled(self):
+        if self._is_interrupted:
+            self.cancelled.emit()
+            self.finished.emit()
+            return True
+        return False
     
     def cancel(self):
         self._is_interrupted = True
@@ -411,7 +430,7 @@ class Loading(QWidget):
         spin_layout.setContentsMargins(0, 0, 0, 0)
 
         # Spinner (GIF) setup
-        self.spinner = QSvgWidget("src/app/assets/830.svg")
+        self.spinner = QSvgWidget(resource_path("assets/830.svg"))
         self.spinner.setFixedSize(100, 100)
 
         # Processing text label
@@ -421,11 +440,12 @@ class Loading(QWidget):
         # Home button
         self.home_button = QPushButton("Home")
         self.home_button.clicked.connect(lambda: self.controller.show_frame("File type"))
+        # self.home_button.clicked.connect(self.reset)
         self.home_button.setVisible(False)
 
         # Cancel button
         self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(Worker.cancel)
+        self.cancel_button.clicked.connect(self.cancel_worker)
 
         # Spinner layout
         spin_layout.addSpacing(20)
@@ -475,6 +495,7 @@ class Loading(QWidget):
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
         self.worker.result.connect(self.display_result)
+        self.worker.cancelled.connect(self.handle_cancelled)
         self.thread.started.connect(self.worker.do_work)
         self.thread.start()
 
@@ -484,13 +505,29 @@ class Loading(QWidget):
         self.home_button.setVisible(True)
         self.cancel_button.setVisible(False)
         self.label.setText(message)
+    
+    def cancel_worker(self):
+        if self.worker:
+            self.worker.cancel()
+            self.label.setText("Cancelling...")
+    
+    def handle_cancelled(self):
+        self._is_interrupted = True
+        self.label.setText("Cancelled")
+        self.reset()
+    
+    def reset(self):
+        pass
+        self.spinner.show()
+        self.label.setText("Processing, please wait...")
+        self.controller.show_frame("File type")
 
 class MEAGui(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setGeometry(100, 100, 960, 600)
 
-        _id = QFontDatabase.addApplicationFont("C:/Users/Admin/UniBE/spike-sort/src/app/assets/fa-solid-900.ttf")
+        _id = QFontDatabase.addApplicationFont(resource_path("assets/fa-solid-900.ttf"))
 
         self.obj = MEAPipeline()
         self.stack = QStackedWidget()
@@ -509,7 +546,7 @@ class MEAGui(QMainWindow):
         title.setStyleSheet("font-size: 25px; font-weight: bold; padding-left: 15px;")
 
         howTo_button = QPushButton('Learn more')
-        howTo_button.setIcon(QIcon('C:/Users/Admin/UniBE/spike-sort/src/app/assets/icons8-help-50.png'))
+        howTo_button.setIcon(QIcon(resource_path("assets/icons8-help-50.png")))
         howTo_button.setIconSize(QSize(20, 20))
         howTo_button.setFont(QFont('Arial', 10, QFont.Bold))
         howTo_button.setStyleSheet("""
@@ -550,16 +587,16 @@ class MEAGui(QMainWindow):
         page = self.pages.get(name)
         if page:
             if name == "Save dir":
-                self.pages["Save dir"].update_offset()  # update offset visibilitys
+                self.pages["Save dir"].update_offset()  # update offset visibility
             self.stack.setCurrentWidget(page)
             index = list(self.pages.keys()).index(name)
             self.progressbar.value = index
 
 stylesheet = """MEAGui {
-        background-image: url("C:/Users/Admin/UniBE/spike-sort/src/app/assets/7178736_11911.jpg"); 
+        background-image: url(%s); 
         background-repeat: no-repeat; 
         background-position: center;
-    }"""
+    }""" % resource_path("assets\\7178736_11911.jpg").replace("\\", "/")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

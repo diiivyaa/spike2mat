@@ -6,7 +6,6 @@ from matplotlib.path import Path
 from matplotlib.widgets import Cursor
 from collections import Counter
 from scipy.io import savemat
-from matplotlib.widgets import LassoSelector
 from matplotlib.colors import LogNorm
 import seaborn as sns
 
@@ -16,7 +15,6 @@ class MEAPipeline():
         If list is empty --> take all 4096 channels within 0 to 750ms interval.
         If list contains channels --> then image file was given to isolate channels with activity.'''
         self.channels = []
-        self.no_offset = False
     
     def read_files(self,  bxr_path, img_path):
         '''Reads and checks if the bxr file is valid'''
@@ -57,13 +55,10 @@ class MEAPipeline():
         # collect the required spike data 
         self.spikeDataTimestamps = self.file[self.wellID + '/SpikeTimes'][:] 
         self.spikeDataChIdxs = self.file[self.wellID + '/SpikeChIdxs'][:]
-        if not np.any(self.spikeDataChIdxs == 1):  # If channel (1,2) doesn't exist --> prompt user to input time offset
-            self.no_offset = True
         self.spikeDataWaveforms = self.file[self.wellID + '/SpikeForms'][:] 
         self.waveformLength = self.file[self.wellID + '/SpikeForms'].attrs['Wavelength'] 
 
-        return [self.minDigitalValue, self.maxDigitalValue, self.minAnalogValue, self.maxAnalogValue, self.waveformLength,  
-                self.dacFactor, self.offsetValue, self.samplingRate, self.chIdxs, self.spikeDataWaveforms]
+        return np.any(self.spikeDataChIdxs == 1) # If channel (1,2) doesn't exist --> return false
     
     def get_heatmap(self, savePath, dpi=17.5):  # set threshold as input
         '''Computes channel frequency and plots the activity map'''
@@ -109,7 +104,7 @@ class MEAPipeline():
 
         if not hasattr(self, 'img_path'):  # check to see if the pre-requistite method is called
             raise RuntimeError("File not loaded. Call read_file() before select_landmark().")
-
+        print(self.img_path)
         self.img = plt.imread(self.img_path)
         fig, ax = plt.subplots()
         ax.imshow(self.img)
@@ -168,7 +163,7 @@ class MEAPipeline():
         self.overlay = cv2.addWeighted(self.heatmap, 1-alpha, cv2.cvtColor(img_colour, cv2.COLOR_RGB2BGR), alpha, 0)
 
         # Resize for display
-        height, width, channels = self.img.shape 
+        width, height, channels = self.img.shape 
         self.resized = cv2.resize(self.overlay, (height, width), interpolation = cv2.INTER_CUBIC)
 
         cv2.imshow("Overlay", self.resized)
@@ -233,6 +228,13 @@ class MEAPipeline():
         cv2.imshow("Contours", self.resized)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
+
+        # Reset variables
+        state = {
+            'drawing': False,
+            'mode': True,
+            'contour': []
+        }
 
         return self.transformed_contour
     

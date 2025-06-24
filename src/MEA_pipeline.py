@@ -161,6 +161,14 @@ class MEAPipeline():
         # Overlay
         alpha = 0.5
         self.overlay = cv2.addWeighted(self.heatmap, 1-alpha, cv2.cvtColor(img_colour, cv2.COLOR_RGB2BGR), alpha, 0)
+
+        # Resize for display
+        width, height, channels = self.img.shape 
+        self.resized = cv2.resize(self.overlay, (height, width), interpolation = cv2.INTER_CUBIC)
+
+        cv2.imshow("Overlay", self.resized)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
     
     def draw_contours(self):
         '''Draw the sample's contour manually'''
@@ -214,6 +222,13 @@ class MEAPipeline():
         contour_array = np.array(state['contour'], dtype=np.float32).reshape(-1, 1, 2)
         self.transformed_contour = cv2.perspectiveTransform(contour_array, self.matrix)
         cv2.drawContours(self.heatmap, [self.transformed_contour.astype(int)], 0, (0, 255, 0), thickness=cv2.FILLED)
+
+        # For display
+        cv2.drawContours(self.resized, [contour_array.astype(int)], -1, (0, 255, 0), 2)
+        cv2.imshow("Contours", self.resized)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
         return self.transformed_contour
     
     def get_contours(self, threshold=25):
@@ -249,6 +264,13 @@ class MEAPipeline():
         # Transform
         contour = best_contour.astype('float32') # Ensure type is float32
         self.transformed_contour = cv2.perspectiveTransform(contour, self.matrix)
+
+        # For display
+        cv2.drawContours(self.resized, [contour.astype(int)], -1, (0, 255, 0), 2)
+        cv2.imshow("Contours", self.resized)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
         return self.transformed_contour
 
     def get_coords(self):
@@ -445,41 +467,41 @@ class MEAPipeline():
         
         return self.waveformData
 
-    def pca(self, n=3):
-        pca = PCA(n_components=n)
-        self.pca_scaled = pca.fit_transform(self.waveformData)
-        return self.pca_scaled
+    # def pca(self, n=3):
+    #     pca = PCA(n_components=n)
+    #     self.pca_scaled = pca.fit_transform(self.waveformData)
+    #     return self.pca_scaled
     
-    def select_waveform(self):
-       def on_select(verts):
-            path = Path(verts)
+    # def select_waveform(self):
+    #    def on_select(verts):
+    #         path = Path(verts)
             
-            global mask
-            mask = path.contains_points(self.pca_scaled[:, [0,1]])
-            print(dict(Counter(mask)))
+    #         global mask
+    #         mask = path.contains_points(self.pca_scaled[:, [0,1]])
+    #         print(dict(Counter(mask)))
 
-            fig = plt.figure()
-            for i in range(len(self.waveformData)):
-                y = self.offsetValue + self.dacFactor * self.waveformData[i]
-                if mask[i]:  # if waveform is selected
-                    plt.plot(self.x, y, color='yellow')  # highlight selected in red
-                else:
-                    plt.plot(self.x, y, color='blue', alpha=0.3)
-            plt.show()
+    #         fig = plt.figure()
+    #         for i in range(len(self.waveformData)):
+    #             y = self.offsetValue + self.dacFactor * self.waveformData[i]
+    #             if mask[i]:  # if waveform is selected
+    #                 plt.plot(self.x, y, color='yellow')  # highlight selected in red
+    #             else:
+    #                 plt.plot(self.x, y, color='blue', alpha=0.3)
+    #         plt.show()
 
-            fig, ax = plt.subplots()
-            ax.scatter(self.pca_scaled[:, 0], self.pca_scaled[:, 1], s=1)
-            plt.xlabel('PC 1')
-            plt.ylabel('PC 2')
-            plt.title(f'PCA of Spike Waveforms - Channel {self.chIdx}')
+    #         fig, ax = plt.subplots()
+    #         ax.scatter(self.pca_scaled[:, 0], self.pca_scaled[:, 1], s=1)
+    #         plt.xlabel('PC 1')
+    #         plt.ylabel('PC 2')
+    #         plt.title(f'PCA of Spike Waveforms - Channel {self.chIdx}')
 
-            selector = LassoSelector(
-                ax, on_select,
-                useblit=True,       
-                button=[1, 3],
-                props=dict(color='yellow', linewidth=2, linestyle='-') 
-            )
-            plt.show()
+    #         selector = LassoSelector(
+    #             ax, on_select,
+    #             useblit=True,       
+    #             button=[1, 3],
+    #             props=dict(color='yellow', linewidth=2, linestyle='-') 
+    #         )
+    #         plt.show()
     
     def run(self, savePath, bxr_path, img_path, threshold=25):
         self.read_files(bxr_path, img_path)
@@ -500,4 +522,4 @@ if __name__ == '__main__':
     bxr_path = input('BXR file path: ')
     
     si = MEAPipeline()
-    si.run(savePath=r"C:\Users\Admin\UniBE\data\170625", bxr_path=bxr_path, img_path=img_path, threshold=35)
+    si.run(savePath=r"C:\Users\Admin\UniBE\data", bxr_path=bxr_path, img_path=img_path, threshold=35)
