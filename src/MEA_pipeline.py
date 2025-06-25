@@ -160,12 +160,15 @@ class MEAPipeline():
 
         # Overlay
         alpha = 0.5
-        self.overlay = cv2.addWeighted(self.heatmap, 1-alpha, cv2.cvtColor(img_colour, cv2.COLOR_RGB2BGR), alpha, 0)
+        self.overlay = cv2.addWeighted(img_colour, 1-alpha, cv2.cvtColor(self.heatmap, cv2.COLOR_RGB2BGR), alpha, 0)
 
         # Resize for display
-        width, height, channels = self.img.shape 
-        self.resized = cv2.resize(self.overlay, (height, width), interpolation = cv2.INTER_CUBIC)
+        matrix = cv2.getPerspectiveTransform(dst_pts, src_pts)
+        height, width, _ = self.img.shape
+        wrapped_heatmap = cv2.warpPerspective(self.heatmap, matrix, (width, height))
+        self.resized = cv2.addWeighted(self.img, 1-alpha, wrapped_heatmap, 0.5, 0)
 
+        # Display
         cv2.imshow("Overlay", self.resized)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
@@ -297,17 +300,11 @@ class MEAPipeline():
 
         contour_copy = np.array(sorted(contour_copy, key=lambda x: x[0][0]), dtype=object)
 
-        cv2.drawContours(self.overlay, [contour_copy.astype(int)], -1, (0, 255, 0), 2)
-        cv2.drawContours(self.overlay, [self.transformed_contour.astype(int)], 0, (255, 0, 0), 2)
         cv2.drawContours(self.heatmap, [contour_copy.astype(int)], 0, (0, 255, 0), thickness=cv2.FILLED)
-        cv2.imshow("Contours", self.overlay)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
         return contour_copy
     
     def get_channels(self):
-        '''Identifies active electrode channels based on the contour overlay.'''
+        '''Identifies active electrode channels based on heatmap with contour.'''
 
         if not hasattr(self, 'heatmap'):  # check to see if the pre-requistite method is called
             raise RuntimeError("Contours not detected. Call get_contours() before get_channels().")
@@ -317,7 +314,6 @@ class MEAPipeline():
         mask = np.all(self.heatmap == [0, 255, 0], axis=-1)  # take extra channels
         coords = np.column_stack(np.where(mask))
         cleaned_heatmap = np.zeros((64, 64))
-        # self.channels = []
         for point in coords:
             x, y = point
             cleaned_heatmap[x][y] = self.counts_array[x][y]
@@ -509,9 +505,9 @@ class MEAPipeline():
         self.get_heatmap(savePath)
         self.select_landmark()
         self.transform()
-        # self.get_contours(threshold)
-        # self.get_coords()
-        self.draw_contours()
+        self.get_contours(threshold)
+        self.get_coords()
+        # self.draw_contours()
         self.get_channels()
         # self.align_time()
         self.to_mat(savePath, time_end=760)

@@ -163,12 +163,10 @@ class MEAPipeline():
         self.overlay = cv2.addWeighted(self.heatmap, 1-alpha, cv2.cvtColor(img_colour, cv2.COLOR_RGB2BGR), alpha, 0)
 
         # Resize for display
-        width, height, channels = self.img.shape 
-        self.resized = cv2.resize(self.overlay, (height, width), interpolation = cv2.INTER_CUBIC)
-
-        cv2.imshow("Overlay", self.resized)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        matrix = cv2.getPerspectiveTransform(dst_pts, src_pts)
+        height, width, _ = self.img.shape
+        wrapped_heatmap = cv2.warpPerspective(self.heatmap, matrix, (width, height))
+        self.resized = cv2.addWeighted(self.img, 1-alpha, wrapped_heatmap, 0.5, 0)
     
     def draw_contours(self):
         '''Draw the sample's contour manually'''

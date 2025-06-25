@@ -8,8 +8,6 @@ from PySide6.QtCore import Qt, QSize, Slot, Signal, QObject, QThread
 from MEA_pipeline import MEAPipeline
 from progressBar import CustomProgressBar
 
-# CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
-
 def resource_path(relative_path):
     """Get path to bundled resource, whether in dev or in PyInstaller .exe"""
     try:
@@ -232,9 +230,9 @@ class savePath(QWidget):
         self.controller.dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
         if self.controller.dir_path:
             self.file_label.setText(self.controller.dir_path)
-            self.controller.obj.get_heatmap(self.controller.dir_path)
     
     def next_clicked(self):
+        self.controller.obj.get_heatmap(self.controller.dir_path)
         # Set default values
         offset = self.offset.text()
         time = self.time_end.text()
@@ -439,8 +437,7 @@ class Loading(QWidget):
 
         # Home button
         self.home_button = QPushButton("Home")
-        self.home_button.clicked.connect(lambda: self.controller.show_frame("File type"))
-        # self.home_button.clicked.connect(self.reset)
+        self.home_button.clicked.connect(self.go_home)
         self.home_button.setVisible(False)
 
         # Cancel button
@@ -517,10 +514,18 @@ class Loading(QWidget):
         self.reset()
     
     def reset(self):
-        pass
         self.spinner.show()
         self.label.setText("Processing, please wait...")
+        self.home_button.setVisible(False)
+        self.cancel_button.setVisible(True)
+    
+    def go_home(self):
+        self.reset()
         self.controller.show_frame("File type")
+    
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.reset()
 
 class MEAGui(QMainWindow):
     def __init__(self):
@@ -600,6 +605,7 @@ stylesheet = """MEAGui {
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(resource_path("assets/icon.ico")))
     app.setStyleSheet(stylesheet)
     window = MEAGui()
     window.show()
