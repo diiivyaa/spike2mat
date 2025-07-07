@@ -5,7 +5,8 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets/830.svg', 'assets'),('assets/7178736_11911.jpg', 'assets'), ('assets/fa-solid-900.ttf', 'assets'), ('assets/icons8-help-50.png', 'assets')],
+    datas=[('assets/830.svg', 'assets'),('assets/7178736_11911.jpg', 'assets'), \
+    ('assets/fa-solid-900.ttf', 'assets'), ('assets/icons8-help-50.png', 'assets'), ('assets/icon.ico', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
