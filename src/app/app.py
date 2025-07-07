@@ -290,9 +290,9 @@ class OptionSelect(QWidget):
         back_button.clicked.connect(lambda: self.controller.show_frame("Save dir"))
         nav_layout.addWidget(back_button)
 
-        next_button = QPushButton("Next")
-        next_button.clicked.connect(self.process)
-        nav_layout.addWidget(next_button)
+        self.next_button = QPushButton("Next")
+        self.next_button.clicked.connect(self.process)
+        nav_layout.addWidget(self.next_button)
         container_layout.addLayout(nav_layout)
         container.setLayout(container_layout)
 
@@ -346,6 +346,7 @@ class OptionSelect(QWidget):
             self.channels_func = self.controller.obj.get_channels
      
     def process(self):
+        self.next_button.setEnabled(False)  # disable next button
         # Always run these steps regardless of contour detection method
         self.controller.obj.select_landmark()
         self.controller.obj.transform()
@@ -571,7 +572,7 @@ class MEAGui(QMainWindow):
         self.progressbar = CustomProgressBar()
         self.progressbar.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.progressbar.setFixedSize(550,55) 
-        self.progressbar.labels = ["File type", "Save dir", "Contour detection", 'Results']
+        self.progressbar.labels = ["File upload", "Parameters", "Contour detection", 'Results']
 
         header = QWidget()
         h_layout = QHBoxLayout(header)

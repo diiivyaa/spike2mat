@@ -10,6 +10,7 @@ from scipy.io import savemat
 from sklearn.decomposition import PCA
 from matplotlib.widgets import LassoSelector
 from matplotlib.colors import LogNorm
+from PIL import Image, ExifTags
 
 class MEAPipeline():
     def __init__(self):
@@ -106,8 +107,38 @@ class MEAPipeline():
 
         if not hasattr(self, 'img_path'):  # check to see if the pre-requistite method is called
             raise RuntimeError("File not loaded. Call read_file() before select_landmark().")
+        
+        # Open image with PIL and correct orientation
+        self.img_raw = Image.open(self.img_path)
+        width, height = self.img_raw.size
 
-        self.img = plt.imread(self.img_path)
+        if width > 1500 or height > 1500:
+            self.img_raw.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
+
+        print(self.img_raw.size[0], self.img_raw.size[1])
+
+        # Handle EXIF orientation
+        try:
+            for orientation in ExifTags.TAGS.keys():
+                if ExifTags.TAGS[orientation] == 'Orientation':
+                    break
+
+            exif = self.img_raw._getexif()
+            if exif is not None:
+                orientation_value = exif.get(orientation, None)
+
+                if orientation_value == 3:
+                    self.img_raw = self.img_raw.rotate(180, expand=True)
+                elif orientation_value == 6:
+                    self.img_raw = self.img_raw.rotate(270, expand=True)
+                elif orientation_value == 8:
+                    self.img_raw = self.img_raw.rotate(90, expand=True)
+        except (AttributeError, KeyError, IndexError):
+            # If image has no EXIF data or cannot read orientation
+            raise RuntimeError("Image file is corrupted. Please try again with another image.")
+
+        # Convert to NumPy array and show
+        self.img = plt.imread(self.img_path) if isinstance(self.img_raw, str) else np.array(self.img_raw)
         fig, ax = plt.subplots()
         ax.imshow(self.img)
         cursor = Cursor(ax, useblit=True, color='blue', linewidth=1)  # crosshair
@@ -207,7 +238,7 @@ class MEAPipeline():
                     if len(state['contour']) > 2:
                         cv2.line(state['image'], (x, y), state['contour'][0], (0, 0, 255), 2)
 
-        state['image'] = cv2.imread(self.img_path)
+        state['image'] = self.img
         window_name = "Draw Contours"
         cv2.namedWindow(window_name)
         cv2.setMouseCallback(window_name, draw)
@@ -505,9 +536,9 @@ class MEAPipeline():
         self.get_heatmap(savePath)
         self.select_landmark()
         self.transform()
-        self.get_contours(threshold)
-        self.get_coords()
-        # self.draw_contours()
+        # self.get_contours(threshold)
+        # self.get_coords()
+        self.draw_contours()
         self.get_channels()
         # self.align_time()
         self.to_mat(savePath, time_end=760)
@@ -518,4 +549,4 @@ if __name__ == '__main__':
     bxr_path = input('BXR file path: ')
     
     si = MEAPipeline()
-    si.run(savePath=r"C:\Users\Admin\UniBE\data", bxr_path=bxr_path, img_path=img_path, threshold=35)
+    si.run(savePath=r"C:\Users\Admin\UniBE\data\040725_Organoid", bxr_path=bxr_path, img_path=img_path, threshold=35)
