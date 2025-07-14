@@ -41,7 +41,7 @@ pip install -r requirements.txt
 
 | Path                          | Type   | Description                                             |
 |-------------------------------|--------|---------------------------------------------------------|
-| `pike-sort/`                  | Folder | Root project directory                                  |
+| `spike-sort/`                 | Folder | Root project directory                                  |
 | ├── `3Brain/`                 | Folder | Exploratory data analysis and herding spikes            |
 | ├── `src/`                    | Folder | Main source code directory                              |
 | │ ├── `app/`                  | Folder | Application scripts and assets                          |
