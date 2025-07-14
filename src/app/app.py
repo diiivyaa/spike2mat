@@ -1,9 +1,9 @@
-import os, sys, pathlib
+import os, sys, pathlib, itertools
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, \
 QStackedWidget, QRadioButton, QButtonGroup, QLabel, QSizePolicy, QScrollArea, QLineEdit, QGroupBox
 from PySide6.QtGui import QFontDatabase, QIcon, QFont, QIntValidator
 from PySide6.QtSvgWidgets import QSvgWidget
-from PySide6.QtCore import Qt, QSize, Slot, Signal, QObject, QThread
+from PySide6.QtCore import Qt, QSize, Slot, QThread, QObject, Signal, Slot
 
 from MEA_pipeline import MEAPipeline
 from progressBar import CustomProgressBar
@@ -94,25 +94,30 @@ class ImportFile(QWidget):
         files, _ = QFileDialog.getOpenFileNames(self, "Select files", "", "Images, BXR and BRW (*.bxr *.brw *.jpeg *.jpg *.png)")
         self.controller.bxr_path, self.controller.img_path = None, None
         if files:
+            self.controller.is_more_than_two_files = len(files)
             self.controller.dir_path  = pathlib.Path(files[0]).parent  # Get parent folder
 
             filenames_display = "\n".join([f"• {os.path.basename(path)}" for path in files])
             self.file_label.setText(f"{len(files)} file(s) selected:\n{filenames_display}")
             self.file_label.setToolTip("\n".join(files))
-            for f_path in files:
-                ext = pathlib.Path(f_path).suffix
-                ext = ext.lower()
-                if ext == ".bxr":
-                    self.controller.bxr_path = f_path
-                elif ext == ".jpeg" or ext == ".jpg" or ext == ".png":
-                    self.controller.img_path = f_path
-                    self.controller.flag = True
-                    print(self.controller.flag)
-                else:
-                    self.controller.img_path = ""
+
+            temp = set(itertools.combinations(files, 2))
+            self.controller.file_pairs = [combi for combi in temp if any(pathlib.Path(path).suffix.lower() in {".jpg", ".jpeg", ".png"} for path in combi)]
+        
+            if not temp and not self.controller.file_pairs:  # For only for bxr file without image
+                self.controller.bxr_path, self.controller.img_path = files[0], ""
+                self.controller.file_pairs = [files[0]]
+                self.controller.flag = False
+            else:
+                self.controller.flag = True
+                for (path1, path2) in self.controller.file_pairs:  # Run through all given files to check if all are valid
+                    if pathlib.Path(path1).suffix.lower() == ".bxr":
+                        self.controller.bxr_path, self.controller.img_path = path1, path2
+                    else:
+                        self.controller.bxr_path, self.controller.img_path = path2, path1
             print(self.controller.bxr_path, self.controller.img_path)
             self.controller.obj.read_files(self.controller.bxr_path, self.controller.img_path)
-            self.controller.offset_flag = self.controller.obj.get_var()
+            self.controller.offset_flag = self.controller.obj.get_var()  # Use the last valid file to check for the time channel
         self.next_button.setEnabled(True)
         self.controller.pages["Save dir"].file_label.setText(str(self.controller.dir_path))
         
@@ -327,131 +332,64 @@ class OptionSelect(QWidget):
     def check(self):
         radio_id = self.radio_group.checkedId()
         self.threshold = 25  # default
+        self.get_channels = self.controller.obj.get_channels
         if radio_id == 1:
             self.auto_radio.setChecked(True)
             self.manual_radio.setChecked(False)
-
-            self.func = self.controller.obj.get_contours # Collect the correct methods from MEAPipeline
-            self.helper_func = self.controller.obj.get_coords
-            self.channels_func = self.controller.obj.get_channels
-
+            self.controller.contours = self.controller.obj.get_contours # Collect the correct methods from MEAPipeline
             self.thresh.show() # Show the input to get threshold
             self.thresh.returnPressed.connect(self.process)
         if radio_id == 2:
             self.auto_radio.setChecked(False)
             self.manual_radio.setChecked(True)
             self.thresh.hide() # Hide the input to get threshold
-            
-            self.func = self.controller.obj.draw_contours
-            self.channels_func = self.controller.obj.get_channels
+            self.controller.contours = self.controller.obj.draw_contours
+
      
     def process(self):
         self.next_button.setEnabled(False)  # disable next button
-        # Always run these steps regardless of contour detection method
-        self.controller.obj.select_landmark()
-        self.controller.obj.transform()
 
         # Check if threshold line edit is visible
         if self.thresh.isVisible():
             text = self.thresh.text()
             if text:
                 self.threshold = int(text)
-                self.func(threshold=self.threshold)
-            else: 
-                self.func(self.threshold)
-            self.helper_func()
-            self.channels_func()
-        else:
-            self.func()
-            self.channels_func()
 
         self.controller.show_frame("Loading")
         self.controller.pages["Loading"].start_work()
-
-class Worker(QObject):
-    finished = Signal()
-    progress = Signal(int)
-    cancelled = Signal()
-    result = Signal(str)
-
-    def __init__(self, pipeline, save_path, *args):
-        super().__init__()
-        self.pipeline = pipeline
-        self.save_path = save_path
-        self._is_interrupted = False
-        if args:
-            self.time_end = args[0]
-            self.offset = args[1]
-
-    @Slot()
-    def do_work(self):
-        print("Worker is running") 
-        if self.check_cancelled(): 
-            return
-
-        if self.pipeline.align_time:
-            self.pipeline.align_time()
-            if self.check_cancelled(): 
-                return
-            self.pipeline.obj.to_mat(self.save_path, self.time_end)
-        else:
-            if self.check_cancelled(): return
-            self.pipeline.obj.to_mat(self.save_path, self.time_end, self.offset)
-
-        if self.check_cancelled(): return
-
-        self.result.emit("Work finished!")  # reset
-        self.finished.emit()
-    
-    def check_cancelled(self):
-        if self._is_interrupted:
-            self.cancelled.emit()
-            self.finished.emit()
-            return True
-        return False
-    
-    def cancel(self):
-        self._is_interrupted = True
+        self.next_button.setEnabled(True)  # disable next button
 
 class Loading(QWidget):
     def __init__(self, controller):
         super().__init__()
-        self.worker = None
-        self.thread = None
         self.controller = controller
-        
+
         self.layout = QVBoxLayout()
         container = QWidget()
         container_layout = QVBoxLayout()
-        
+
         spin_layout = QVBoxLayout()
         spin_layout.setSpacing(0)
         spin_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Spinner (GIF) setup
         self.spinner = QSvgWidget(resource_path("assets/830.svg"))
         self.spinner.setFixedSize(100, 100)
 
-        # Processing text label
         self.label = QLabel("Processing, please wait...")
         self.label.setStyleSheet("font-size: 14px; color: #333; padding: 8px;")
 
-        # Home button
         self.home_button = QPushButton("Home")
         self.home_button.clicked.connect(self.go_home)
         self.home_button.setVisible(False)
 
-        # Cancel button
         self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.cancel_worker)
+        self.cancel_button.setVisible(False)  # No longer needed but left in case
 
-        # Spinner layout
         spin_layout.addSpacing(20)
         spin_layout.addWidget(self.spinner, alignment=Qt.AlignCenter)
         spin_layout.addSpacing(15)
         spin_layout.addWidget(self.label, alignment=Qt.AlignCenter)
 
-        # Container layout
         container_layout.addLayout(spin_layout)
         container_layout.addWidget(self.home_button)
         container_layout.addWidget(self.cancel_button)
@@ -483,19 +421,80 @@ class Loading(QWidget):
 
         self.layout.addWidget(container, alignment=Qt.AlignCenter)
         self.setLayout(self.layout)
-    
+
+        # Variables to track progress
+        self.current_index = 0
+        self.thread = None
+        self.worker = None
+
     @Slot()
     def start_work(self):
-        self.worker = Worker(self.controller, self.controller.dir_path, self.controller.time, self.controller.offset)
+        self.label.setText("Starting processing...")
+        self.home_button.setVisible(False)
+        self.cancel_button.setEnabled(True)
+
+        self.file_pairs = self.controller.file_pairs
+        self.save_path = self.controller.dir_path
+        self.time_end = self.controller.time
+        self.offset = self.controller.offset
+
+        self.current_index = 0
+        self.start_next_worker()
+
+    def start_next_worker(self):
+        self.spinner.show()
+        if self.current_index >= len(self.file_pairs):
+            self.label.setText("All files processed!")
+            self.spinner.hide()
+            self.home_button.setVisible(True)
+            self.cancel_button.setEnabled(False)
+            return
+
+        if not self.controller.flag:
+            bxr_path = self.controller.bxr_path
+            img_path = None
+        else:
+            path1, path2 = self.file_pairs[self.current_index]
+            if pathlib.Path(path1).suffix.lower() == ".bxr":
+                bxr_path, img_path = path1, path2
+            else:
+                bxr_path, img_path = path2, path1
+
+        self.label.setText(f"Processing {self.current_index + 1} of {len(self.file_pairs)} file(s)")
+
+        # Run main-thread stuff first
+        self.controller.obj.read_files(bxr_path, img_path)
+        self.controller.obj.get_var()
+        self.controller.obj.get_heatmap(self.save_path)
+
+        if img_path and not self.current_index:
+            print("test")
+            self.controller.obj.select_landmark()
+            self.controller.obj.transform()
+            self.controller.contours()
+        if img_path:
+            self.controller.obj.get_channels()
+
+        # Now start a thread JUST for 'to_mat' part
         self.thread = QThread()
+        self.worker = Worker(self.controller, self.save_path, self.time_end, self.offset)
         self.worker.moveToThread(self.thread)
+
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
+
         self.worker.result.connect(self.display_result)
         self.worker.cancelled.connect(self.handle_cancelled)
+
         self.thread.started.connect(self.worker.do_work)
+        self.thread.finished.connect(self.on_thread_finished)
+
         self.thread.start()
+
+    def on_thread_finished(self):
+        self.current_index += 1
+        self.start_next_worker()
 
     @Slot(str)
     def display_result(self, message):
@@ -503,30 +502,61 @@ class Loading(QWidget):
         self.home_button.setVisible(True)
         self.cancel_button.setVisible(False)
         self.label.setText(message)
-    
+
     def cancel_worker(self):
         if self.worker:
             self.worker.cancel()
             self.label.setText("Cancelling...")
-    
+
     def handle_cancelled(self):
-        self._is_interrupted = True
-        self.label.setText("Cancelled")
-        self.reset()
+        self.label.setText("Cancelled by user")
+        self.home_button.setVisible(True)
+        self.cancel_button.setEnabled(False)
     
     def reset(self):
         self.spinner.show()
         self.label.setText("Processing, please wait...")
         self.home_button.setVisible(False)
         self.cancel_button.setVisible(True)
+        self.current_index = 0
     
     def go_home(self):
         self.reset()
         self.controller.show_frame("File type")
-    
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.reset()
+
+class Worker(QObject):
+    finished = Signal()
+    cancelled = Signal()
+    result = Signal(str)
+
+    def __init__(self, pipeline, save_path, time_end, offset):
+        super().__init__()
+        self.pipeline = pipeline
+        self.save_path = save_path
+        self.time_end = time_end
+        self.offset = offset
+        self._is_interrupted = False
+
+    @Slot()
+    def do_work(self):
+        if self._is_interrupted:
+            self.cancelled.emit()
+            self.finished.emit()
+            return
+        try:
+            if self.pipeline.align_time:
+                self.pipeline.align_time()
+                self.pipeline.obj.to_mat(self.save_path, self.time_end)
+            else:
+                self.pipeline.obj.to_mat(self.save_path, self.time_end, self.offset)
+            self.result.emit("Processing done for current file")
+        except Exception as e:
+            self.result.emit(f"Error in thread: {e}")
+
+        self.finished.emit()
+
+    def cancel(self):
+        self._is_interrupted = True
 
 class MEAGui(QMainWindow):
     def __init__(self):

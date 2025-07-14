@@ -1,21 +1,18 @@
-import h5py, os, cv2, pathlib
+import h5py, os, cv2, pathlib, itertools
 import numpy as np
 import numpy.ma as ma
 import seaborn as sns
 import matplotlib.pyplot as plt
-from matplotlib.path import Path
 from matplotlib.widgets import Cursor
 from collections import Counter
 from scipy.io import savemat
-from sklearn.decomposition import PCA
-from matplotlib.widgets import LassoSelector
 from matplotlib.colors import LogNorm
 from PIL import Image, ExifTags
 
 class MEAPipeline():
     def __init__(self):
         self.channels = []
-    
+
     def read_files(self,  bxr_path, img_path):
         '''Reads and checks if the bxr file is valid'''
         self.bxr_path= os.path.abspath(bxr_path.replace('"', ''))
@@ -114,8 +111,6 @@ class MEAPipeline():
 
         if width > 1500 or height > 1500:
             self.img_raw.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
-
-        print(self.img_raw.size[0], self.img_raw.size[1])
 
         # Handle EXIF orientation
         try:
@@ -336,14 +331,16 @@ class MEAPipeline():
     
     def get_channels(self):
         '''Identifies active electrode channels based on heatmap with contour.'''
+        self.channels = []
 
         if not hasattr(self, 'heatmap'):  # check to see if the pre-requistite method is called
             raise RuntimeError("Contours not detected. Call get_contours() before get_channels().")
         elif not hasattr(self, 'counts_array'):
             raise RuntimeError("Heatmap not generated. Call get_heatmap() before get_channels().")
         
-        mask = np.all(self.heatmap == [0, 255, 0], axis=-1)  # take extra channels
+        mask = np.all(self.heatmap == [0, 255, 0], axis=-1) 
         coords = np.column_stack(np.where(mask))
+        print(len(coords))
         cleaned_heatmap = np.zeros((64, 64))
         for point in coords:
             x, y = point
@@ -352,6 +349,9 @@ class MEAPipeline():
             # coordinate conventions differ between image and heatmaps (i.e., x and y are flipped)
         cleaned_heatmap[0][1] = self.counts_array[0][1]
         self.channels.append(64*0+1)
+        self.channels.sort()
+
+        print('first', len(self.channels))
 
         # Mask and handle low values
         mask = cleaned_heatmap == 0
@@ -361,26 +361,26 @@ class MEAPipeline():
         vmin = cleaned_heatmap.min()
         vmax = cleaned_heatmap.max()
 
-        # Plot heatmap
-        fig = plt.Figure(figsize=(64, 64))
-        ax = fig.add_subplot(1, 1, 1)
+        # # Plot heatmap
+        # fig = plt.Figure(figsize=(64, 64))
+        # ax = fig.add_subplot(1, 1, 1)
 
-        heatmap = sns.heatmap(counts_masked, cmap='viridis', norm=LogNorm(vmin=vmin, vmax=vmax))
-        cbar = heatmap.collections[0].colorbar
-        cbar.ax.minorticks_off()
+        # heatmap = sns.heatmap(counts_masked, cmap='viridis', norm=LogNorm(vmin=vmin, vmax=vmax))
+        # cbar = heatmap.collections[0].colorbar
+        # cbar.ax.minorticks_off()
 
-        # Set x and y ticks every 10 positions
-        xticks = np.arange(0, 64, 10)
-        yticks = np.arange(0, 64, 10)
+        # # Set x and y ticks every 10 positions
+        # xticks = np.arange(0, 64, 10)
+        # yticks = np.arange(0, 64, 10)
 
-        ax.set_xticks(xticks)
-        ax.set_yticks(yticks)
+        # ax.set_xticks(xticks)
+        # ax.set_yticks(yticks)
 
-        ax.set_xticklabels(xticks, rotation=45, ha='right')
-        ax.set_yticklabels(yticks)
+        # ax.set_xticklabels(xticks, rotation=45, ha='right')
+        # ax.set_yticklabels(yticks)
 
-        plt.tight_layout()
-        plt.show()
+        # plt.tight_layout()
+        # plt.show()
 
     def align_time(self):
         '''Align time data based on channel (1,2) which is (0,1) in the array notation'''
@@ -413,6 +413,12 @@ class MEAPipeline():
         print("Converting to MAT file format................")
         
         waveformData, timeData = {}, {}
+        self.spikeDataChIdxs.sort()
+
+        print('second', len(self.channels))
+        for ch in self.channels:
+            waveformData[ch] = []
+            timeData[ch] = []
         for idx, ch in enumerate(self.spikeDataChIdxs):
             if not self.channels or ch in self.channels:  # not self.channels checks if an image is given
                 if ch not in waveformData:                # ch in self.channels checks if image is given and channels with activity are kept
@@ -423,28 +429,25 @@ class MEAPipeline():
                 waveform = self.spikeDataWaveforms[idx * self.waveformLength : (idx + 1) * self.waveformLength]
                 spikemV = [self.offsetValue + i * self.dacFactor for i in waveform] # convert digital signal to microvolt
                 
-                if 0 <= time_s <= time_end:
-                    waveformData[ch].append(spikemV)  # store both!
-                    timeData[ch].append(time_s)
-    
-        # remove empty lists
-        waveformData = {k:v for k,v in waveformData.items() if v}
-        timeData = {k:v for k,v in timeData.items() if v}
+                waveformData[ch].append(spikemV)  # store both!
+                timeData[ch].append(time_s)
 
-        keys, copy = list(waveformData.keys()), list(waveformData.keys())
+        print('tf', len(waveformData.keys()))
+        # remove empty lists
+        waveformData = {k:(np.zeros(self.waveformLength) if not v else v) for k,v in waveformData.items()}
+        timeData = {k:(np.zeros(self.waveformLength) if not v else v) for k,v in timeData.items()}
+
+        keys = list(waveformData.keys())
         spikeArray, timeArray = [], []
         for i in range(len(keys)):  
-            if 30 <= len(waveformData[keys[i]]) <= 100000:
-                spikeArray.append(np.asarray(waveformData[keys[i]], dtype=np.float64))
-                arr = np.asarray(timeData[keys[i]], dtype=np.float64)
-                timeArray.append(arr.reshape(-1, 1))
-            else:
-                copy.remove(keys[i])
+            spikeArray.append(np.asarray(waveformData[keys[i]], dtype=np.float64))
+            arr = np.asarray(timeData[keys[i]], dtype=np.float64)
+            timeArray.append(arr.reshape(-1, 1))
 
         # Format list to numpy column vector
         spikeArray = np.array(spikeArray, dtype=object).reshape(-1, 1)
         timeArray = np.array(timeArray, dtype=object).reshape(-1, 1)
-        channels_arr = np.array(copy, dtype=np.float64).reshape(-1, 1)
+        channels_arr = np.array(keys, dtype=np.float64).reshape(-1, 1)
 
         # Convert to MATLAB-compatible format
         mat_data = {
@@ -458,95 +461,42 @@ class MEAPipeline():
         # Save to .mat file
         savemat(os.path.join(savePath, ''.join([self.f_name, '.mat'])), mat_data)
     
-    def get_waveform(self, chIdx=2899, start=0, end=500):
-        '''Selects and plots waveforms for a specified channel within a given time range.'''
-        # Start and end of recording interval
-        dataStartPosition = start
-        dataDurationSec = end
-        self.chIdx = chIdx
-
-        # convert the requested time interval from seconds to frames 
-        startFrame = int(dataStartPosition * self.samplingRate) 
-        nFrames = int(dataDurationSec * self.samplingRate) 
-        print('frames', startFrame, nFrames)
-
-        # collect the TOCs 
-        toc = np.array(self.file['TOC']) 
-        spikeToc = np.array(self.file[self.wellID + '/SpikeTOC']) 
-        
-        # from the given start position and duration (in frames), find the corresponding range of spike positions using the TOC 
-        tocStartIdx = np.searchsorted(toc[:, 1], startFrame) 
-        tocEndIdx = min(np.searchsorted(toc[:, 1], startFrame + nFrames, side='right') + 1, len(toc) - 1) 
-        spikeStart = spikeToc[tocStartIdx]
-        spikeEnd = spikeToc[tocEndIdx]
-        selected_spikeDataWaveforms = self.spikeDataWaveforms[spikeStart*self.waveformLength:spikeEnd*self.waveformLength] 
-
-        self.waveformData = [] 
-        for idx, ch in enumerate(self.spikeDataChIdxs): 
-            if ch == chIdx and startFrame <= self.spikeDataTimestamps[idx] < startFrame + nFrames:
-                self.waveformData.append(selected_spikeDataWaveforms[idx*self.waveformLength:idx*self.waveformLength+self.waveformLength])
-        
-        self.x = np.arange(0, self.waveformLength, 1) / self.samplingRate 
-        for i in range(len(self.waveformData)):
-            # convert the waveform to analog 
-            y = self.offsetValue + self.dacFactor * self.waveformData[i]
-            plt.plot(self.x, y, color='blue', alpha=0.3)
-        
-        return self.waveformData
-
-    # def pca(self, n=3):
-    #     pca = PCA(n_components=n)
-    #     self.pca_scaled = pca.fit_transform(self.waveformData)
-    #     return self.pca_scaled
-    
-    # def select_waveform(self):
-    #    def on_select(verts):
-    #         path = Path(verts)
-            
-    #         global mask
-    #         mask = path.contains_points(self.pca_scaled[:, [0,1]])
-    #         print(dict(Counter(mask)))
-
-    #         fig = plt.figure()
-    #         for i in range(len(self.waveformData)):
-    #             y = self.offsetValue + self.dacFactor * self.waveformData[i]
-    #             if mask[i]:  # if waveform is selected
-    #                 plt.plot(self.x, y, color='yellow')  # highlight selected in red
-    #             else:
-    #                 plt.plot(self.x, y, color='blue', alpha=0.3)
-    #         plt.show()
-
-    #         fig, ax = plt.subplots()
-    #         ax.scatter(self.pca_scaled[:, 0], self.pca_scaled[:, 1], s=1)
-    #         plt.xlabel('PC 1')
-    #         plt.ylabel('PC 2')
-    #         plt.title(f'PCA of Spike Waveforms - Channel {self.chIdx}')
-
-    #         selector = LassoSelector(
-    #             ax, on_select,
-    #             useblit=True,       
-    #             button=[1, 3],
-    #             props=dict(color='yellow', linewidth=2, linestyle='-') 
-    #         )
-    #         plt.show()
-    
-    def run(self, savePath, bxr_path, img_path, threshold=25):
+    def run(self, savePath, bxr_path, img_path, flag, threshold=25):
         self.read_files(bxr_path, img_path)
         self.get_var()
         self.get_heatmap(savePath)
-        self.select_landmark()
-        self.transform()
-        # self.get_contours(threshold)
-        # self.get_coords()
-        self.draw_contours()
+        if flag == 0:
+            self.select_landmark()
+            self.transform()
+            # self.get_contours(threshold)
+            # self.get_coords()
+            self.draw_contours()
         self.get_channels()
         # self.align_time()
+        self.to_mat(savePath, time_end=760)
+    
+    def run_4096_ch(self, savePath, bxr_path):
+        self.read_files(bxr_path, img_path="")
+        self.get_var()
+        self.get_heatmap(savePath)
         self.to_mat(savePath, time_end=760)
 
 if __name__ == '__main__':
     # read input from the user
-    img_path = input('Image path: ')
-    bxr_path = input('BXR file path: ')
-    
+    paths = input('Image path: ')
+    # bxr_path = input('BXR file path: ')
+    paths = paths.split()
+    flag = len(paths)
+    temp = set(itertools.combinations(paths, 2))
+    file_pairs = [combi for combi in temp if any(pathlib.Path(path).suffix.lower() in {".jpg", ".jpeg", ".png"} for path in combi)]
     si = MEAPipeline()
-    si.run(savePath=r"C:\Users\Admin\UniBE\data\040725_Organoid", bxr_path=bxr_path, img_path=img_path, threshold=35)
+
+    if not temp and not file_pairs:
+        si.run_4096_ch(savePath=r"C:\Users\Admin\UniBE\data", bxr_path=paths[0])
+
+    for idx, (path1, path2) in enumerate(file_pairs):
+        if pathlib.Path(path1).suffix.lower() == ".bxr":
+            bxr_path, img_path = path1, path2
+        else:
+            bxr_path, img_path = path2, path1
+        si.run(savePath=r"C:\Users\Admin\UniBE\data", bxr_path=bxr_path, img_path=img_path, flag=idx)
