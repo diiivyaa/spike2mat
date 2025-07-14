@@ -64,7 +64,7 @@ pyinstaller src/app/app.spec
 ```
 
 ---
-### 🧪 Notes
+## 🧪 Notes
 
 - Use the `3Brain/` folder for testing and exploratory data analysis, especially for herding spikes.
 - The GUI app is built using `App.py` in the `src/app/` directory.
