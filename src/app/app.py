@@ -1,7 +1,8 @@
 import os, sys, pathlib, itertools
+from PIL import Image
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, \
-QStackedWidget, QRadioButton, QButtonGroup, QLabel, QSizePolicy, QScrollArea, QLineEdit, QGroupBox
-from PySide6.QtGui import QFontDatabase, QIcon, QFont, QIntValidator
+QStackedWidget, QRadioButton, QButtonGroup, QLabel, QSizePolicy, QScrollArea, QLineEdit, QGroupBox, QFrame
+from PySide6.QtGui import QFontDatabase, QIcon, QFont, QIntValidator, QPixmap
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtCore import Qt, QSize, Slot, QThread, QObject, Signal, Slot
 
@@ -56,7 +57,7 @@ class ImportFile(QWidget):
 
         container_layout = QVBoxLayout()
         container_layout.addSpacing(20)
-        heading = QLabel("Upload files. Accepted file extensions are .bxr, .brw, .jpg, .jpeg and .png")
+        heading = QLabel("Upload files. Accepted file extensions are .bxr, .jpg, .jpeg and .png")
         heading.setStyleSheet("font-size: 14px; color: #333; padding: 8px;")
         container_layout.addWidget(heading, alignment=Qt.AlignCenter|Qt.AlignTop)
         container_layout.addSpacing(20)
@@ -91,7 +92,7 @@ class ImportFile(QWidget):
         self.setLayout(layout)
 
     def import_func(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Select files", "", "Images, BXR and BRW (*.bxr *.brw *.jpeg *.jpg *.png)")
+        files, _ = QFileDialog.getOpenFileNames(self, "Select files", "", "Images and BXR (*.bxr *.jpeg *.jpg *.png)")
         self.controller.bxr_path, self.controller.img_path = None, None
         if files:
             self.controller.is_more_than_two_files = len(files)
@@ -100,28 +101,29 @@ class ImportFile(QWidget):
             filenames_display = "\n".join([f"• {os.path.basename(path)}" for path in files])
             self.file_label.setText(f"{len(files)} file(s) selected:\n{filenames_display}")
             self.file_label.setToolTip("\n".join(files))
+            self.controller.obj.input_flag = len(files)
 
-            temp = set(itertools.combinations(files, 2))
-            self.controller.file_pairs = [combi for combi in temp if any(pathlib.Path(path).suffix.lower() in {".jpg", ".jpeg", ".png"} for path in combi)]
-        
-            if not temp and not self.controller.file_pairs:  # For only for bxr file without image
+            if len(files) == 1 and pathlib.Path(files[0]).suffix.lower() == ".bxr":  # If only one bxr file is given
                 self.controller.bxr_path, self.controller.img_path = files[0], ""
-                self.controller.file_pairs = [files[0]]
-                self.controller.flag = False
-            else:
-                self.controller.flag = True
-                for (path1, path2) in self.controller.file_pairs:  # Run through all given files to check if all are valid
-                    if pathlib.Path(path1).suffix.lower() == ".bxr":
-                        self.controller.bxr_path, self.controller.img_path = path1, path2
-                    else:
-                        self.controller.bxr_path, self.controller.img_path = path2, path1
-            print(self.controller.bxr_path, self.controller.img_path)
-            self.controller.obj.read_files(self.controller.bxr_path, self.controller.img_path)
-            self.controller.offset_flag = self.controller.obj.get_var()  # Use the last valid file to check for the time channel
+                self.controller.file_pairs = [(self.controller.bxr_path, self.controller.img_path)]
+            else:  # for one image file and 1 or more bxr files
+                temp = set(itertools.combinations(files, 2))    # Get all pair combinations of files
+                self.controller.file_pairs = [combi for combi in temp if any(pathlib.Path(path).suffix.lower() in {".jpg", ".jpeg", ".png"} for path in combi)]
+                # Keep only the pairs with an image file
+
+            for (path1, path2) in self.controller.file_pairs:  # Run through all given files to check if all are valid
+                if pathlib.Path(path1).suffix.lower() == ".bxr":
+                    self.controller.bxr_path, self.controller.img_path = path1, path2
+                else:
+                    self.controller.bxr_path, self.controller.img_path = path2, path1
+            
+                self.controller.obj.read_files(self.controller.bxr_path, self.controller.img_path)
+                self.controller.offset_flag = self.controller.obj.get_var()  # Use the last valid file to check for the time channel
+        
         self.next_button.setEnabled(True)
         self.controller.pages["Save dir"].file_label.setText(str(self.controller.dir_path))
         
-class savePath(QWidget):
+class saveDir(QWidget):
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
@@ -241,20 +243,14 @@ class savePath(QWidget):
         # Set default values
         offset = self.offset.text()
         time = self.time_end.text()
-        if offset:
-            self.controller.offset = int(offset)
-        else:
-            self.controller.offset = 0
-        
-        if time:
-            self.controller.time = int(time)
-        else: 
-            self.controller.time = 750
+
+        self.controller.offset = int(offset) if offset else 0
+        self.controller.time = int(time) if time else 760
     
-        print(f"Flag value at click: {self.controller.flag}")
-        if self.controller.flag:
+        print(f"Input flag: {self.controller.obj.input_flag}")
+        if self.controller.obj.input_flag > 1:
             self.controller.show_frame("Contour detection")
-        else:
+        else:  # If only bxr file --> go straight to processing
             self.controller.show_frame("Loading")
             self.controller.pages["Loading"].start_work()
 
@@ -332,11 +328,11 @@ class OptionSelect(QWidget):
     def check(self):
         radio_id = self.radio_group.checkedId()
         self.threshold = 25  # default
-        self.get_channels = self.controller.obj.get_channels
         if radio_id == 1:
             self.auto_radio.setChecked(True)
             self.manual_radio.setChecked(False)
             self.controller.contours = self.controller.obj.get_contours # Collect the correct methods from MEAPipeline
+            self.controller.helper = self.controller.obj.get_coords
             self.thresh.show() # Show the input to get threshold
             self.thresh.returnPressed.connect(self.process)
         if radio_id == 2:
@@ -344,20 +340,26 @@ class OptionSelect(QWidget):
             self.manual_radio.setChecked(True)
             self.thresh.hide() # Hide the input to get threshold
             self.controller.contours = self.controller.obj.draw_contours
+            self.controller.helper = None
 
-     
     def process(self):
         self.next_button.setEnabled(False)  # disable next button
-
         # Check if threshold line edit is visible
         if self.thresh.isVisible():
             text = self.thresh.text()
             if text:
-                self.threshold = int(text)
+                self.controller.threshold = int(text)
+        
+        self.clear()
 
         self.controller.show_frame("Loading")
         self.controller.pages["Loading"].start_work()
-        self.next_button.setEnabled(True)  # disable next button
+        
+        self.next_button.setEnabled(True)  # enable next button
+    
+    def clear(self):
+        self.auto_radio.setChecked(False)
+        self.manual_radio.setChecked(False)
 
 class Loading(QWidget):
     def __init__(self, controller):
@@ -383,7 +385,8 @@ class Loading(QWidget):
         self.home_button.setVisible(False)
 
         self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.setVisible(False)  # No longer needed but left in case
+        self.home_button.clicked.connect(self.cancel_worker)
+        self.cancel_button.setVisible(False)
 
         spin_layout.addSpacing(20)
         spin_layout.addWidget(self.spinner, alignment=Qt.AlignCenter)
@@ -438,44 +441,46 @@ class Loading(QWidget):
         self.time_end = self.controller.time
         self.offset = self.controller.offset
 
+        self.num_times = self.controller.obj.input_flag - 1 if self.controller.obj.input_flag > 1 else self.controller.obj.input_flag
         self.current_index = 0
         self.start_next_worker()
 
     def start_next_worker(self):
         self.spinner.show()
-        if self.current_index >= len(self.file_pairs):
+        if self.current_index >= self.num_times:
             self.label.setText("All files processed!")
             self.spinner.hide()
             self.home_button.setVisible(True)
-            self.cancel_button.setEnabled(False)
+            self.cancel_button.setVisible(False)
             return
 
-        if not self.controller.flag:
-            bxr_path = self.controller.bxr_path
-            img_path = None
-        else:
+        if self.controller.obj.input_flag > 1:
             path1, path2 = self.file_pairs[self.current_index]
             if pathlib.Path(path1).suffix.lower() == ".bxr":
                 bxr_path, img_path = path1, path2
             else:
                 bxr_path, img_path = path2, path1
+        else:
+            bxr_path, img_path = self.controller.bxr_path, self.controller.img_path
 
-        self.label.setText(f"Processing {self.current_index + 1} of {len(self.file_pairs)} file(s)")
+        self.label.setText(f"Processing {self.current_index+1} of {self.num_times} data file(s)")
 
-        # Run main-thread stuff first
+        # Run main thread first (methods for all types of input)
         self.controller.obj.read_files(bxr_path, img_path)
         self.controller.obj.get_var()
         self.controller.obj.get_heatmap(self.save_path)
 
-        if img_path and not self.current_index:
-            print("test")
-            self.controller.obj.select_landmark()
-            self.controller.obj.transform()
-            self.controller.contours()
-        if img_path:
-            self.controller.obj.get_channels()
+        if self.controller.obj.input_flag > 1:
+            if self.current_index == 0:
+                # Only run these methods when image is given and for the first file pair
+                self.controller.obj.select_landmark()
+                self.controller.obj.transform()
+                self.controller.contours()
+                if self.controller.helper:
+                    self.controller.helper()
+            self.controller.obj.get_channels()  # Get channels for every file 
 
-        # Now start a thread JUST for 'to_mat' part
+        # Now start a thread JUST for 'to_mat'. Why? to keep the GUI responsive during processing
         self.thread = QThread()
         self.worker = Worker(self.controller, self.save_path, self.time_end, self.offset)
         self.worker.moveToThread(self.thread)
@@ -499,9 +504,9 @@ class Loading(QWidget):
     @Slot(str)
     def display_result(self, message):
         self.spinner.hide()
+        self.label.setText(message)
         self.home_button.setVisible(True)
         self.cancel_button.setVisible(False)
-        self.label.setText(message)
 
     def cancel_worker(self):
         if self.worker:
@@ -522,6 +527,7 @@ class Loading(QWidget):
     
     def go_home(self):
         self.reset()
+        self.controller.obj = MEAPipeline()
         self.controller.show_frame("File type")
 
 class Worker(QObject):
@@ -558,6 +564,86 @@ class Worker(QObject):
     def cancel(self):
         self._is_interrupted = True
 
+class stepBox(QFrame):
+    def __init__(self, step_number, description, image_path=None, desc_path=None):
+        super().__init__()
+        self.setFrameShape(QFrame.Box)
+        self.setStyleSheet("border-radius: 12px; border: 1px solid #ddd; background-color: #fff; padding: 16px; margin-bottom: 20px;")
+
+        layout = QVBoxLayout()
+
+        # Step and description
+        step_layout = QHBoxLayout()
+        step_label = QLabel(f"<h2>Step {step_number}</h2>")
+        step_label.setTextFormat(Qt.TextFormat.RichText)
+        step_layout.addWidget(step_label)
+
+        desc_label = QLabel(description)
+        desc_label.setWordWrap(True)
+        step_layout.addWidget(desc_label)
+
+        step_layout.setStretch(0, 1)
+        step_layout.setStretch(1, 2)
+        layout.addLayout(step_layout)
+
+        # Image layout (side-by-side)
+        if image_path or desc_path:
+            image_layout = QVBoxLayout()
+            
+            if image_path:
+                image_label = QLabel()
+                pixmap = QPixmap(image_path)
+                pixmap.setDevicePixelRatio(app.devicePixelRatio()) 
+                image_label.setPixmap(pixmap)
+                image_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+                image_layout.addWidget(image_label)
+
+            if desc_path:
+                desc_image_label = QLabel()
+                desc_pixmap = QPixmap(desc_path)
+                desc_pixmap.setDevicePixelRatio(app.devicePixelRatio())
+                desc_image_label.setPixmap(desc_pixmap)
+                desc_image_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+                image_layout.addWidget(desc_image_label)
+
+            layout.addLayout(image_layout)
+
+        self.setLayout(layout)
+
+class learnMore(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("User Guide")
+        self.setStyleSheet("background-color: white; color: black;")
+        self.setGeometry(100, 100, 1100, 600)
+
+        # Scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+
+        # Container widget inside scroll area
+        container = QWidget()
+        scroll.setWidget(container)
+
+        # Layout for the container
+        layout = QVBoxLayout(container)
+
+        header = QLabel("<h1>User Guide</h1><p>A guide to help you navigate Spike2Mat in just 4 steps.</p>")
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        layout.addWidget(stepBox(1, 'Upload supported files: .bxr for data, and .jpeg, .jpg, or .png for images.', resource_path("assets/step1.png")))
+        layout.addWidget(stepBox(2, 'Enter the output path. Specify the end time and offset manually if time channel (1, 2) is missing.', resource_path("assets/step2.png")))
+        layout.addWidget(stepBox(3, 'If an image is uploaded, select a contour detection method.', resource_path("assets/step3.png"), resource_path("assets/info.png")))
+        layout.addWidget(stepBox(4, 'Wait for processing. The converted .mat file will be saved to the output path.'))
+
+        layout.addStretch()
+
+        main_layout = QVBoxLayout(self)
+        main_layout.addWidget(scroll)
+        self.setLayout(main_layout)
+
 class MEAGui(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -571,15 +657,15 @@ class MEAGui(QMainWindow):
 
         self.pages = {
             "File type": ImportFile(self),
-            "Save dir": savePath(self),
+            "Save dir": saveDir(self),
             "Contour detection": OptionSelect(self),
-            'Loading': Loading(self)}
+            "Loading": Loading(self)}
         
-        for name, page in self.pages.items():
+        for _, page in self.pages.items():
             self.stack.addWidget(page)
         
-        title = QLabel("APP")
-        title.setStyleSheet("font-size: 25px; font-weight: bold; padding-left: 15px;")
+        title = QLabel("Spike2Mat")
+        title.setStyleSheet("font-size: 25px; font-weight: bold; padding-left: 5px;")
 
         howTo_button = QPushButton('Learn more')
         howTo_button.setIcon(QIcon(resource_path("assets/icons8-help-50.png")))
@@ -598,6 +684,7 @@ class MEAGui(QMainWindow):
                 background-color: #3532d1;
             }""")
         howTo_button.setFixedSize(135, 45)
+        howTo_button.clicked.connect(self.show_howTo)
 
         self.progressbar = CustomProgressBar()
         self.progressbar.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
@@ -627,6 +714,14 @@ class MEAGui(QMainWindow):
             self.stack.setCurrentWidget(page)
             index = list(self.pages.keys()).index(name)
             self.progressbar.value = index
+    
+    def show_howTo(self):
+        if not hasattr(self, 'learnMore') or not self.learnMore.isVisible():
+            self.learnMore = learnMore()
+            self.learnMore.show()
+        else:
+            self.learnMore.raise_()
+            self.learnMore.activateWindow()
 
 stylesheet = """MEAGui {
         background-image: url(%s); 

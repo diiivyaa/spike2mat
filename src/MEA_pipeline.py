@@ -9,6 +9,9 @@ from scipy.io import savemat
 from matplotlib.colors import LogNorm
 from PIL import Image, ExifTags
 
+# Optional
+from pipelineAnalysis import profile_algorithm
+
 class MEAPipeline():
     def __init__(self):
         self.channels = []
@@ -53,12 +56,10 @@ class MEAPipeline():
         # collect the required spike data 
         self.spikeDataTimestamps = self.file[self.wellID + '/SpikeTimes'][:] 
         self.spikeDataChIdxs = self.file[self.wellID + '/SpikeChIdxs'][:]
-        print(np.any(self.spikeDataChIdxs == 1))
         self.spikeDataWaveforms = self.file[self.wellID + '/SpikeForms'][:] 
         self.waveformLength = self.file[self.wellID + '/SpikeForms'].attrs['Wavelength'] 
 
-        return [self.minDigitalValue, self.maxDigitalValue, self.minAnalogValue, self.maxAnalogValue, self.waveformLength,  
-                self.dacFactor, self.offsetValue, self.samplingRate, self.chIdxs, self.spikeDataWaveforms]
+        self.align_flag = np.any(self.spikeDataChIdxs == 1)
     
     def get_heatmap(self, savePath, dpi=17.5):  # set threshold as input
         '''Computes channel frequency and plots the activity map'''
@@ -137,7 +138,7 @@ class MEAPipeline():
         fig, ax = plt.subplots()
         ax.imshow(self.img)
         cursor = Cursor(ax, useblit=True, color='blue', linewidth=1)  # crosshair
-        plt.title("Click 4 Points")
+        plt.title("Click 4 Points in clockwise direction")
 
         self.points = plt.ginput(4, timeout=0)  # Click 4 points on the image
 
@@ -193,11 +194,6 @@ class MEAPipeline():
         height, width, _ = self.img.shape
         wrapped_heatmap = cv2.warpPerspective(self.heatmap, matrix, (width, height))
         self.resized = cv2.addWeighted(self.img, 1-alpha, wrapped_heatmap, 0.5, 0)
-
-        # Display
-        cv2.imshow("Overlay", self.resized)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
     
     def draw_contours(self):
         '''Draw the sample's contour manually'''
@@ -233,19 +229,29 @@ class MEAPipeline():
                     if len(state['contour']) > 2:
                         cv2.line(state['image'], (x, y), state['contour'][0], (0, 0, 255), 2)
 
-        state['image'] = self.img
+        self.img_bgr = cv2.cvtColor(np.array(self.img), cv2.COLOR_RGB2BGR)
+        state['image'] = self.img_bgr
         window_name = "Draw Contours"
         cv2.namedWindow(window_name)
         cv2.setMouseCallback(window_name, draw)
+        
+        original_image = self.img_bgr.copy()  # Store a clean copy for reset
 
         while True:
+            cv2.putText(state['image'], "Press 'r' to reset, 'm' to toggle mode, Enter to finish", 
+            (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 255, 200), 1)
             cv2.imshow(window_name, state['image'])
             k = cv2.waitKey(1) & 0xFF
             if k == ord('m'):
                 state['mode'] = not state['mode']
-            elif k == 27:  # ESC
+            elif k == ord('r'):  # Press 'r' to reset drawing
+                state['image'] = original_image.copy()
+                state['contour'].clear()
+                state['drawing'] = False
+                state['current_x'], state['current_y'] = 0, 0
+            elif k == 13:  # Enter to exit
                 break
-
+        
         cv2.destroyAllWindows()
 
         contour_array = np.array(state['contour'], dtype=np.float32).reshape(-1, 1, 2)
@@ -325,13 +331,12 @@ class MEAPipeline():
             contour_copy = np.vstack([contour_copy, new_points])
 
         contour_copy = np.array(sorted(contour_copy, key=lambda x: x[0][0]), dtype=object)
-
         cv2.drawContours(self.heatmap, [contour_copy.astype(int)], 0, (0, 255, 0), thickness=cv2.FILLED)
+
         return contour_copy
     
     def get_channels(self):
         '''Identifies active electrode channels based on heatmap with contour.'''
-        self.channels = []
 
         if not hasattr(self, 'heatmap'):  # check to see if the pre-requistite method is called
             raise RuntimeError("Contours not detected. Call get_contours() before get_channels().")
@@ -340,7 +345,6 @@ class MEAPipeline():
         
         mask = np.all(self.heatmap == [0, 255, 0], axis=-1) 
         coords = np.column_stack(np.where(mask))
-        print(len(coords))
         cleaned_heatmap = np.zeros((64, 64))
         for point in coords:
             x, y = point
@@ -351,8 +355,6 @@ class MEAPipeline():
         self.channels.append(64*0+1)
         self.channels.sort()
 
-        print('first', len(self.channels))
-
         # Mask and handle low values
         mask = cleaned_heatmap == 0
         counts_masked = ma.masked_array(cleaned_heatmap, mask=mask)
@@ -361,26 +363,26 @@ class MEAPipeline():
         vmin = cleaned_heatmap.min()
         vmax = cleaned_heatmap.max()
 
-        # # Plot heatmap
-        # fig = plt.Figure(figsize=(64, 64))
-        # ax = fig.add_subplot(1, 1, 1)
+        # Plot heatmap
+        fig = plt.Figure(figsize=(64, 64))
+        ax = fig.add_subplot(1, 1, 1)
 
-        # heatmap = sns.heatmap(counts_masked, cmap='viridis', norm=LogNorm(vmin=vmin, vmax=vmax))
-        # cbar = heatmap.collections[0].colorbar
-        # cbar.ax.minorticks_off()
+        heatmap = sns.heatmap(counts_masked, cmap='viridis', norm=LogNorm(vmin=vmin, vmax=vmax))
+        cbar = heatmap.collections[0].colorbar
+        cbar.ax.minorticks_off()
 
-        # # Set x and y ticks every 10 positions
-        # xticks = np.arange(0, 64, 10)
-        # yticks = np.arange(0, 64, 10)
+        # Set x and y ticks every 10 positions
+        xticks = np.arange(0, 64, 10)
+        yticks = np.arange(0, 64, 10)
 
-        # ax.set_xticks(xticks)
-        # ax.set_yticks(yticks)
+        ax.set_xticks(xticks)
+        ax.set_yticks(yticks)
 
-        # ax.set_xticklabels(xticks, rotation=45, ha='right')
-        # ax.set_yticklabels(yticks)
+        ax.set_xticklabels(xticks, rotation=45, ha='right')
+        ax.set_yticklabels(yticks)
 
-        # plt.tight_layout()
-        # plt.show()
+        plt.tight_layout()
+        plt.show()
 
     def align_time(self):
         '''Align time data based on channel (1,2) which is (0,1) in the array notation'''
@@ -413,9 +415,7 @@ class MEAPipeline():
         print("Converting to MAT file format................")
         
         waveformData, timeData = {}, {}
-        self.spikeDataChIdxs.sort()
 
-        print('second', len(self.channels))
         for ch in self.channels:
             waveformData[ch] = []
             timeData[ch] = []
@@ -432,7 +432,6 @@ class MEAPipeline():
                 waveformData[ch].append(spikemV)  # store both!
                 timeData[ch].append(time_s)
 
-        print('tf', len(waveformData.keys()))
         # remove empty lists
         waveformData = {k:(np.zeros(self.waveformLength) if not v else v) for k,v in waveformData.items()}
         timeData = {k:(np.zeros(self.waveformLength) if not v else v) for k,v in timeData.items()}
@@ -461,42 +460,72 @@ class MEAPipeline():
         # Save to .mat file
         savemat(os.path.join(savePath, ''.join([self.f_name, '.mat'])), mat_data)
     
-    def run(self, savePath, bxr_path, img_path, flag, threshold=25):
+    def run_auto(self, savePath, bxr_path, img_path, flag, threshold=25):
         self.read_files(bxr_path, img_path)
         self.get_var()
         self.get_heatmap(savePath)
         if flag == 0:
             self.select_landmark()
             self.transform()
-            # self.get_contours(threshold)
-            # self.get_coords()
-            self.draw_contours()
+            self.get_contours(threshold)
+            self.get_coords()
         self.get_channels()
-        # self.align_time()
+        if self.align_flag:
+            self.align_time()
         self.to_mat(savePath, time_end=760)
     
-    def run_4096_ch(self, savePath, bxr_path):
+    def run_manual(self, savePath, bxr_path, img_path, flag, threshold=25):
+        self.read_files(bxr_path, img_path)
+        self.get_var()
+        self.get_heatmap(savePath)
+        if flag == 0:
+            self.select_landmark()
+            self.transform()
+            self.draw_contours()
+        self.get_channels()
+        if self.align_flag:
+            self.align_time()
+        self.to_mat(savePath, time_end=760)
+    
+    def run_all(self, savePath, bxr_path):
         self.read_files(bxr_path, img_path="")
         self.get_var()
         self.get_heatmap(savePath)
+        if self.align_flag:
+            self.align_time()
         self.to_mat(savePath, time_end=760)
 
 if __name__ == '__main__':
     # read input from the user
-    paths = input('Image path: ')
-    # bxr_path = input('BXR file path: ')
-    paths = paths.split()
-    flag = len(paths)
-    temp = set(itertools.combinations(paths, 2))
+    save_path = input("Enter output path: ")
+    f_type = input("1 - Only .bxr file\n2 - Automated selection \n3 - Manual selection\nEnter 1, 2, or 3: ")
+    files = input('Enter or drag file(s) : ')
+
+    if f_type.isnumeric():
+        f_type = int(f_type)
+    else:
+        print("Invalid input. Please enter numeric values only.")
+        exit()
+
+    files = files.split()
+    flag = len(files)
+    temp = set(itertools.combinations(files, 2))
     file_pairs = [combi for combi in temp if any(pathlib.Path(path).suffix.lower() in {".jpg", ".jpeg", ".png"} for path in combi)]
     si = MEAPipeline()
 
-    if not temp and not file_pairs:
-        si.run_4096_ch(savePath=r"C:\Users\Admin\UniBE\data", bxr_path=paths[0])
+    if f_type == 1:
+        si.run_all(savePath=save_path, bxr_path=files[0])
+        # profile_algorithm(si.run_all, savePath=save_path, bxr_path=files[0])
+        exit()
+    elif f_type == 2:
+        func = si.run_auto
+    else:
+        func = si.run_manual
 
     for idx, (path1, path2) in enumerate(file_pairs):
         if pathlib.Path(path1).suffix.lower() == ".bxr":
             bxr_path, img_path = path1, path2
         else:
             bxr_path, img_path = path2, path1
-        si.run(savePath=r"C:\Users\Admin\UniBE\data", bxr_path=bxr_path, img_path=img_path, flag=idx)
+        func(savePath=save_path, bxr_path=bxr_path, img_path=img_path, flag=idx)
+        # profile_algorithm(func, savePath=save_path, bxr_path=bxr_path, img_path=img_path, flag=idx)

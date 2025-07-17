@@ -1,4 +1,4 @@
-# Spike-Sort
+# Spike2Mat
 
 This repository contains tools for spike sorting and visualization using electrophysiological data. It includes both exploratory scripts and a complete Python-based application for processing and analyzing MEA (Multi-Electrode Array) recordings.
 
@@ -10,7 +10,13 @@ This repository contains tools for spike sorting and visualization using electro
 Make sure Python is installed on your system. You can download the latest version from:  
 🔗 [https://www.python.org/downloads/](https://www.python.org/downloads/)
 
-### 2. Create and activate a virtual environment
+### 2. Clone or download the repository
+
+```bash
+git clone https://github.com/diiivyaa/spike-sort.git
+```
+
+### 3. Create and activate a virtual environment
 
 First, create a virtual environment using `venv`:
 
@@ -31,7 +37,7 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-### 3. Install Dependencies
+### 4. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```

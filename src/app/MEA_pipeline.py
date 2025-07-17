@@ -13,9 +13,13 @@ class MEAPipeline():
     def __init__(self,):
         '''Initialise list to contain channels. 
         If list is empty --> take all 4096 channels within 0 to 750ms interval.
-        If list contains channels --> then image file was given to isolate channels with activity.'''
+        If list contains channels --> then image file was given to isolate channels with activity.
+        
+        Initialise flag to hold information on what files are uploaded.
+        1 --> no image only bxr file, 2 --> one image and one bxr file, n+1 --> one image and n bxr files'''
         self.channels = []
-    
+        self.input_flag = None
+        
     def read_files(self,  bxr_path, img_path):
         '''Reads and checks if the bxr file is valid'''
         self.bxr_path= os.path.abspath(bxr_path.replace('"', ''))
@@ -23,7 +27,9 @@ class MEAPipeline():
             self.img_path = os.path.abspath(img_path.replace('"', ''))
         else:
             self.img_path = None
-        self.f_name = pathlib.Path(self.bxr_path).stem
+        
+        self.f_name = pathlib.Path(self.bxr_path).stem  # get folder name
+        
         try:
             self.wellID = 'Well_A1' # identifier of chip well to be analysed 
             self.file = h5py.File(self.bxr_path, 'r')
@@ -77,8 +83,6 @@ class MEAPipeline():
                 self.counts_array[r][c] = counts[key]
             else:
                 self.counts_array[r][c] = counts[key]
-            
-            self.channels.append(key)
         
         # Mask and handle low values
         mask = self.counts_array == 0
@@ -106,7 +110,6 @@ class MEAPipeline():
 
         if not hasattr(self, 'img_path'):  # check to see if the pre-requistite method is called
             raise RuntimeError("File not loaded. Call read_file() before select_landmark().")
-        print(self.img_path)
 
         # Open image with PIL and correct orientation
         self.img_raw = Image.open(self.img_path)
@@ -114,8 +117,6 @@ class MEAPipeline():
 
         if width > 1500 or height > 1500:
             self.img_raw.thumbnail((1000, 1000), Image.Resampling.LANCZOS)
-
-        print(self.img_raw.size[0], self.img_raw.size[1])
 
         # Handle EXIF orientation
         try:
@@ -142,7 +143,7 @@ class MEAPipeline():
         fig, ax = plt.subplots()
         ax.imshow(self.img)
         cursor = Cursor(ax, useblit=True, color='blue', linewidth=1)  # crosshair
-        plt.title("Click 4 Points")
+        plt.title("Click 4 Points in clockwise direction")
 
         self.points = plt.ginput(4, timeout=0)  # Click 4 points on the image
 
@@ -154,7 +155,6 @@ class MEAPipeline():
         plt.draw()
 
         plt.show()
-        print(self.points)
     
     def transform(self):
         '''Transforms the MEA image to align with the heatmap perspective'''
@@ -239,12 +239,21 @@ class MEAPipeline():
         cv2.namedWindow(window_name)
         cv2.setMouseCallback(window_name, draw)
 
+        original_image = self.img_bgr.copy()  # Store a clean copy for reset
+
         while True:
+            cv2.putText(state['image'], "Press 'r' to reset, 'm' to toggle mode, Enter to finish", 
+            (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 255, 200), 1)
             cv2.imshow(window_name, state['image'])
             k = cv2.waitKey(1) & 0xFF
             if k == ord('m'):
                 state['mode'] = not state['mode']
-            elif k == 13:  # Press enter to break loop
+            elif k == ord('r'):  # Press 'r' to reset drawing
+                state['image'] = original_image.copy()
+                state['contour'].clear()
+                state['drawing'] = False
+                state['current_x'], state['current_y'] = 0, 0
+            elif k == 13:  # Enter to exit
                 break
 
         cv2.destroyAllWindows()
@@ -333,9 +342,6 @@ class MEAPipeline():
             contour_copy = np.vstack([contour_copy, new_points])
 
         contour_copy = np.array(sorted(contour_copy, key=lambda x: x[0][0]), dtype=object)
-
-        cv2.drawContours(self.overlay, [contour_copy.astype(int)], -1, (0, 255, 0), 2)
-        cv2.drawContours(self.overlay, [self.transformed_contour.astype(int)], 0, (255, 0, 0), 2)
         cv2.drawContours(self.heatmap, [contour_copy.astype(int)], 0, (0, 255, 0), thickness=cv2.FILLED)
 
         return contour_copy
@@ -358,7 +364,6 @@ class MEAPipeline():
             # coordinate conventions differ between image and heatmaps (i.e., x and y are flipped)
         cleaned_heatmap[0][1] = self.counts_array[0][1]
         self.channels.append(64*0+1)
-        self.channels.sort()
 
         # Mask and handle low values
         mask = cleaned_heatmap == 0
@@ -398,10 +403,8 @@ class MEAPipeline():
         self.offset = 0
         for idx, ch in enumerate(self.spikeDataChIdxs): 
             if ch == 1:
-                # print(self.spikeDataTimestamps[idx]/self.samplingRate)    # Get the first timestamp in channel 1 (1, 2)
                 self.offset = int(self.spikeDataTimestamps[idx]/self.samplingRate - 30)
                 break  # to stop from looping
-        print(self.offset)
     
     def to_mat(self, savePath, time_end=760, *args):
         '''Convert and format data to a MAT file'''
@@ -421,12 +424,13 @@ class MEAPipeline():
         print("Converting to MAT file format................")
         
         waveformData, timeData = {}, {}
-        self.spikeDataChIdxs.sort()
+        
+        if self.input_flag > 2:
+            for ch in self.channels:
+                waveformData[ch] = []
+                timeData[ch] = []
 
-        for ch in self.channels:
-            waveformData[ch] = []
-            timeData[ch] = []
-        for idx, ch in enumerate(self.spikeDataChIdxs):
+        for idx, ch in enumerate(self.spikeDataChIdxs):   # CANNOT SORT spikeDataCHIdxs as the index holds positional information
             if not self.channels or ch in self.channels:  # not self.channels checks if an image is given
                 if ch not in waveformData:                # ch in self.channels checks if image is given and channels with activity are kept
                     waveformData[ch] = []
@@ -435,29 +439,51 @@ class MEAPipeline():
                 time_s = (self.spikeDataTimestamps[idx]/self.samplingRate) - self.offset  # in seconds
                 waveform = self.spikeDataWaveforms[idx * self.waveformLength : (idx + 1) * self.waveformLength]
                 spikemV = [self.offsetValue + i * self.dacFactor for i in waveform] # convert digital signal to microvolt
-                
-                waveformData[ch].append(spikemV)  # store both!
-                timeData[ch].append(time_s)
-        
+                            
+                if 0 <= time_s <= time_end and self.input_flag < 3:
+                        waveformData[ch].append(spikemV)  # store both!
+                        timeData[ch].append(time_s)
+                else:
+                    waveformData[ch].append(spikemV)  # store both!
+                    timeData[ch].append(time_s)
+
         print("Cleaning up now..............")
 
-        # remove empty lists
-        waveformData = {k:(np.zeros(self.waveformLength) if not v else v) for k,v in waveformData.items()}
-        timeData = {k:(np.zeros(self.waveformLength) if not v else v) for k,v in timeData.items()}
-        
-        keys = list(waveformData.keys())
-        spikeArray, timeArray = [], []
-        for i in range(len(keys)):  
-            spikeArray.append(np.asarray(waveformData[keys[i]], dtype=np.float64))
-            arr = np.asarray(timeData[keys[i]], dtype=np.float64)
-            timeArray.append(arr)
+        if self.input_flag > 2:
+            # pad empty channels with zero
+            waveformData = {k:(np.zeros(self.waveformLength) if not v else v) for k,v in waveformData.items()}
+            timeData = {k:(np.zeros(self.waveformLength) if not v else v) for k,v in timeData.items()}
+            
+            keys = list(waveformData.keys())
+            spikeArray, timeArray = [], []
+            for i in range(len(keys)):  
+                spikeArray.append(np.asarray(waveformData[keys[i]], dtype=np.float64))
+                arr = np.asarray(timeData[keys[i]], dtype=np.float64)
+                timeArray.append(arr.reshape(-1, 1))
+            
+            channels_arr = np.array(keys, dtype=np.float64).reshape(-1, 1)
+        else:
+            # remove empty channels
+            waveformData = {k:v for k,v in waveformData.items() if v}
+            timeData = {k:v for k,v in timeData.items() if v}
+
+            keys, copy = list(waveformData.keys()), list(waveformData.keys())
+            spikeArray, timeArray = [], []
+            for i in range(len(keys)):  
+                if 30 <= len(waveformData[keys[i]]) <= 100000:
+                    spikeArray.append(np.asarray(waveformData[keys[i]], dtype=np.float64))
+                    arr = np.asarray(timeData[keys[i]], dtype=np.float64)
+                    timeArray.append(arr.reshape(-1, 1))
+                else:
+                    copy.remove(keys[i])
+            
+            channels_arr = np.array(copy, dtype=np.float64).reshape(-1, 1)
         
         print("Nearly done")
 
         # Format list to numpy column vector
         spikeArray = np.array(spikeArray, dtype=object).reshape(-1, 1)
         timeArray = np.array(timeArray, dtype=object).reshape(-1, 1)
-        channels_arr = np.array(keys, dtype=np.float64).reshape(-1, 1)
 
         # Convert to MATLAB-compatible format
         mat_data = {
