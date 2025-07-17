@@ -11,7 +11,7 @@ Make sure Python is installed on your system. You can download the latest versio
 🔗 [https://www.python.org/downloads/](https://www.python.org/downloads/)
 
 ### 2. Clone or download the repository
-
+Optional: Download the repository by clicking the green ‘Code’ button.
 ```bash
 git clone https://github.com/diiivyaa/spike-sort.git
 ```
