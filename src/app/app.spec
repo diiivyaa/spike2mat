@@ -37,5 +37,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='C:/Users/Admin/UniBE/spike-sort/src/app/assets/icon.ico',
+    icon='C:/Users/Admin/UniBE/spike2mat/src/app/assets/icon.ico',
 )
