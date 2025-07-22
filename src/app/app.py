@@ -634,7 +634,7 @@ class learnMore(QWidget):
         layout.addWidget(header)
 
         layout.addWidget(stepBox(1, 'Upload supported files: .bxr for data, and .jpeg, .jpg, or .png for images.', resource_path("assets/step1.png")))
-        layout.addWidget(stepBox(2, 'Enter the output path. Specify the end time and offset manually if time channel (1, 2) is missing.', resource_path("assets/step2.png")))
+        layout.addWidget(stepBox(2, 'Enter the output path. By default, the file is synchronised with channel 1, 2 (external input). If missing, manually enter time offset and end. ', resource_path("assets/step2.png")))
         layout.addWidget(stepBox(3, 'If an image is uploaded, select a contour detection method.', resource_path("assets/step3.png"), resource_path("assets/info.png")))
         layout.addWidget(stepBox(4, 'Wait for processing. The converted .mat file will be saved to the output path.'))
 
@@ -665,7 +665,7 @@ class MEAGui(QMainWindow):
             self.stack.addWidget(page)
         
         title = QLabel("Spike2Mat")
-        title.setStyleSheet("font-size: 25px; font-weight: bold; padding-left: 5px;")
+        title.setStyleSheet("font-size: 25px; font-weight: bold; padding-left: 5px; color: white;")
 
         howTo_button = QPushButton('Learn more')
         howTo_button.setIcon(QIcon(resource_path("assets/icons8-help-50.png")))
