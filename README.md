@@ -37,7 +37,7 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-### 4. Install Dependencies
+### 4. Install dependencies
 ```bash
 pip install -r requirements.txt
 ```
@@ -47,7 +47,7 @@ pip install -r requirements.txt
 
 | Path                          | Type   | Description                                             |
 |-------------------------------|--------|---------------------------------------------------------|
-| `pike-sort/`                  | Folder | Root project directory                                  |
+| `spike-sort/`                 | Folder | Root project directory                                  |
 | ├── `3Brain/`                 | Folder | Exploratory data analysis and herding spikes            |
 | ├── `src/`                    | Folder | Main source code directory                              |
 | │ ├── `app/`                  | Folder | Application scripts and assets                          |
@@ -72,7 +72,6 @@ pyinstaller src/app/app.spec
 
 ---
 ## 🧪 Notes
-
 - Use the `3Brain/` folder for testing and exploratory data analysis, especially for herding spikes.
 - The GUI app is built using `App.py` in the `src/app/` directory.
 - The `MEA_pipeline.py` script in `src/` can be used independently for data processing outside of the app context.
@@ -89,3 +88,7 @@ Follow the setup guide here: [Trackpy Installation Guide](https://soft-matter.gi
 This method combines K-Nearest Neighbour tracking (using Euclidean distance) with per-frame graph construction to analyse spatial relationships.
 
 Run `spatial_map.py` **in the virtual environment (venv)** and not in the conda environment.
+=======
+- Use the `3Brain/` folder for testing and exploratory data analysis especially for herding spikes.
+- The GUI app is built using `app.py` in the `src/app/` directory.
+- The `MEA_pipeline.py` script in `src/` can be used independently for data processing outside of the app.
