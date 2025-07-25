@@ -72,6 +72,6 @@ pyinstaller src/app/app.spec
 ---
 ## 🧪 Notes
 
-- Use the `3Brain/` folder for testing and exploratory data analysis, especially for herding spikes.
-- The GUI app is built using `App.py` in the `src/app/` directory.
-- The `MEA_pipeline.py` script in `src/` can be used independently for data processing outside of the app context.
+- Use the `3Brain/` folder for testing and exploratory data analysis especially for herding spikes.
+- The GUI app is built using `app.py` in the `src/app/` directory.
+- The `MEA_pipeline.py` script in `src/` can be used independently for data processing outside of the app.
