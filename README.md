@@ -88,7 +88,3 @@ Follow the setup guide here: [Trackpy Installation Guide](https://soft-matter.gi
 This method combines K-Nearest Neighbour tracking (using Euclidean distance) with per-frame graph construction to analyse spatial relationships.
 
 Run `spatial_map.py` **in the virtual environment (venv)** and not in the conda environment.
-=======
-- Use the `3Brain/` folder for testing and exploratory data analysis especially for herding spikes.
-- The GUI app is built using `app.py` in the `src/app/` directory.
-- The `MEA_pipeline.py` script in `src/` can be used independently for data processing outside of the app.
