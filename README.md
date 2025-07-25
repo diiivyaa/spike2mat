@@ -57,6 +57,7 @@ pip install -r requirements.txt
 | │ │ └── `app.spec`            | File   | PyInstaller specification file                          |
 | │ ├── `brw/`                  | Folder | Exploratory/debugging scripts for BRW files             |
 | │ ├── `bxr/`                  | Folder | Exploratory/debugging scripts for BXR files             |
+| │ ├── `cell_tracking/`        | Folder | Cell tracking scripts and results (images)              |
 | │ ├── `variation/`            | Folder | Computes variation between selected contour channels    |
 | │ └── `MEA_pipeline.py`       | File   | Standalone pipeline script (outside of app context)     |
 | └── `requirements.txt`        | File   | Python dependencies 
@@ -75,3 +76,16 @@ pyinstaller src/app/app.spec
 - Use the `3Brain/` folder for testing and exploratory data analysis, especially for herding spikes.
 - The GUI app is built using `App.py` in the `src/app/` directory.
 - The `MEA_pipeline.py` script in `src/` can be used independently for data processing outside of the app context.
+
+---
+## 🧫 Cell Tracking
+
+### 1. Trackpy  
+Trackpy is used for particle tracking and is best installed via Anaconda. 
+
+Follow the setup guide here: [Trackpy Installation Guide](https://soft-matter.github.io/trackpy/v0.7/installation.html). Run the Jupyter notebook `trackpy.ipynb` using the configured conda environment.
+
+### 2. K-Nearest Neighbour Tracking  
+This method combines K-Nearest Neighbour tracking (using Euclidean distance) with per-frame graph construction to analyse spatial relationships.
+
+Run `spatial_map.py` **in the virtual environment (venv)** and not in the conda environment.
